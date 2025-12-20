@@ -31,7 +31,7 @@ npm run dev:start
 ```bash
 npm run dev:start
 ```
-
+ 
 Open [localhost:3000](http://localhost:3000) to test plugins interactively. See the [testing guide](./docs/website-tutorial.md) for details.
 
 ### Mobile App
