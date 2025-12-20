@@ -1,4 +1,4 @@
-# LNReader Plugins
+# LNReader Plugins fix
 
 <p>
 <img alt="Total number of available plugins" src="https://raw.githubusercontent.com/LNReader/lnreader-plugins/plugins/v3.0.0/total.svg">
