@@ -196,7 +196,7 @@ class RulatePlugin implements Plugin.PluginBase {
   }
 
   async parseChapter(chapterPath: string): Promise<string> {
-    // 1. Добавляем заголовки, чтобы сайт не думал, что мы бот (и не выдавал System Error)
+    // 1. Добавляем заголовки, чтобы сайт не думал, что мы бот
     const headers = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
       'Referer': this.site + chapterPath
