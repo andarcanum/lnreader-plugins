@@ -10,13 +10,14 @@ on:
       - 'scripts/publish-plugins.sh'
       - '.github/workflows/publish-plugins.yml'
 
+# 1. ГЛАВНОЕ ИЗМЕНЕНИЕ: Даем права стандартному токену  
+permissions:
+  contents: write
+
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
   
-permissions:
-  contents: write
-
 jobs:
   publish:
     name: Publish Plugins
