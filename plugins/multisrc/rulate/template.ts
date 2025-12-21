@@ -4,7 +4,7 @@ import { Plugin } from '@/types/plugin';
 import { NovelStatus } from '@libs/novelStatus';
 import { load as parseHTML } from 'cheerio';
 import dayjs from 'dayjs';
-//Test 2
+//Test 3
 export type RulateMetadata = {
   id: string;
   sourceSite: string;
