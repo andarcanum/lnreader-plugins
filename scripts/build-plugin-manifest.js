@@ -18,18 +18,26 @@ import { minify } from './terser.js';
 //   ? process.env.USER_CONTENT_BASE
 //   : `https://raw.githubusercontent.com/${USERNAME}/${REPO}/${CURRENT_BRANCH}`;
 
-// Хардкодим путь для твоего форка и ветки релиза
-const USERNAME = 'andreykolesnikov';
-const REPO = 'lnreader-plugins';
-const CURRENT_BRANCH = 'plugins/v3.0.0'; // Твоя ветка релиза
-const USER_CONTENT_LINK = `https://raw.githubusercontent.com/${USERNAME}/${REPO}/${CURRENT_BRANCH}`; 
-// Важно: добавь /.dist в конец, если файлы лежат внутри .dist, 
-// или убери, если в корне ветки.
-// Судя по твоим прошлым сообщениям, файлы лежат внутри .dist
+// Базовый URL ветки релиза
+const REPO_BASE = "https://raw.githubusercontent.com/andreykolesnikov/lnreader-plugins/plugins/v3.0.0";
 
-const STATIC_LINK = `${USER_CONTENT_LINK}/public/static`;
-// Use legacy .js/src/plugins path for backward compatibility
-const PLUGIN_LINK = `${USER_CONTENT_LINK}/.js/src/plugins`;
+// Иконки лежат в корне ветки в public/static
+// БЫЛО: ${REPO_BASE}/.dist/public/static (ошибка)
+// СТАЛО:
+const STATIC_LINK = `${REPO_BASE}/public/static`;
+
+// Плагины лежат в корне ветки в .js/src/plugins
+// БЫЛО: ${REPO_BASE}/.dist/.js/src/plugins (ошибка)
+// СТАЛО:
+const PLUGIN_LINK = `${REPO_BASE}/.js/src/plugins`;
+
+// USER_CONTENT_LINK можно оставить равным REPO_BASE или убрать использование
+const USER_CONTENT_LINK = REPO_BASE; 
+
+
+// const STATIC_LINK = `${USER_CONTENT_LINK}/public/static`;
+// // Use legacy .js/src/plugins path for backward compatibility
+// const PLUGIN_LINK = `${USER_CONTENT_LINK}/.js/src/plugins`;
 
 const DIST_DIR = '.dist';
 
