@@ -29,6 +29,14 @@ class IfreedomPlugin implements Plugin.PluginBase {
     this.filters = metadata.filters;
   }
 
+  get headers() {
+    return {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+      Referer: this.site + '/vse-knigi/',
+    };
+  }
+
   async popularNovels(
     page: number,
     {
@@ -82,96 +90,114 @@ class IfreedomPlugin implements Plugin.PluginBase {
   }
 
   async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
-    const body = await fetchApi(this.site + novelPath).then(res => res.text());
-    const loadedCheerio = parseHTML(body);
+    const body = await fetchApi(this.site + novelPath, {
+      headers: this.headers,
+    }).then(res => res.text());
+    const $ = parseHTML(body);
 
     const novel: Plugin.SourceNovel = {
       path: novelPath,
-      name: loadedCheerio('.entry-title').text(),
-      cover: loadedCheerio('.img-ranobe > img').attr('src'),
-      summary: loadedCheerio('meta[name="description"]').attr('content'),
+      name: $('.book-info > h1').text().trim(),          // название
+      cover: $('.book-img.block-book-slide-img img').attr('src') || '',
+      summary: $('.tab-content [data-name="Описание"]').text().trim(),
     };
 
-    loadedCheerio('div.data-ranobe').each(function () {
-      switch (loadedCheerio(this).find('b').text()) {
-        case 'Автор':
-          novel.author = loadedCheerio(this)
-            .find('div.data-value')
-            .text()
-            .trim();
-          break;
-        case 'Жанры':
-          novel.genres = loadedCheerio('div.data-value > a')
-            .map((index, element) => loadedCheerio(element).text()?.trim())
-            .get()
-            .join(',');
-          break;
-        case 'Статус книги':
-          novel.status = loadedCheerio('div.data-value')
-            .text()
-            .includes('активен')
-            ? NovelStatus.Ongoing
-            : NovelStatus.Completed;
-          break;
-      }
+    // Жанры
+    const genres: string[] = [];
+    $('.book-info .genreslist a').each((_, el) => {
+      genres.push($(el).text().trim());
     });
+    if (genres.length) {
+      novel.genres = genres.join(',');
+    }
 
-    if (novel.author == 'Не указан') delete novel.author;
+    // Автор (второй .book-info-list внутри .group-book-info-list)
+    const authorText = $('.group-book-info-list .book-info-list')
+      .eq(1)
+      .find('div, a')
+      .first()
+      .text()
+      .trim();
+    if (authorText && authorText !== 'Не указан') {
+      novel.author = authorText;
+    }
 
+    // Статус
+    const statusText = $('.group-book-info-list .book-info-list')
+      .filter((_, el) => $(el).text().includes('Книга завершена'))
+      .text();
+    if (statusText) {
+      novel.status = statusText.includes('завершена')
+        ? NovelStatus.Completed
+        : NovelStatus.Ongoing;
+    }
+
+    // Главы
     const chapters: Plugin.ChapterItem[] = [];
-    const totalChapters = loadedCheerio('div.li-ranobe').length;
+    const chapterNodes = $('.tab-content [data-name="Главы"] .chapterinfo');
+    const totalChapters = chapterNodes.length;
 
-    loadedCheerio('div.li-ranobe').each((chapterIndex, element) => {
-      const name = loadedCheerio(element).find('a').text();
-      const url = loadedCheerio(element).find('a').attr('href');
-      if (
-        !loadedCheerio(element).find('label.buy-ranobe').length &&
-        name &&
-        url
-      ) {
-        const releaseDate = loadedCheerio(element)
-          .find('div.li-col2-ranobe')
-          .text()
-          .trim();
+    chapterNodes.each((index, el) => {
+      const node = $(el);
+      const link = node.find('a').first();
+      const name = link.text().trim();
+      const href = link.attr('href') || '';
+      const dateText = node.find('.timechapter').text().trim();
 
-        chapters.push({
-          name,
-          path: url.replace(this.site, ''),
-          releaseTime: this.parseDate(releaseDate),
-          chapterNumber: totalChapters - chapterIndex,
-        });
-      }
+      if (!name || !href) return;
+
+      chapters.push({
+        name,
+        path: href.replace(this.site, ''),
+        releaseTime: this.parseDate(dateText),
+        chapterNumber: totalChapters - index, // первая в HTML — последняя по номеру
+      });
     });
 
-    novel.chapters = chapters.reverse();
+    novel.chapters = chapters.reverse(); // чтобы в приложении были от 1 к N
     return novel;
   }
 
   async parseChapter(chapterPath: string): Promise<string> {
-    const body = await fetchApi(this.site + chapterPath).then(res =>
-      res.text(),
+    const body = await fetchApi(this.site + chapterPath, {
+      headers: this.headers,
+    }).then(res => res.text());
+
+    const $ = parseHTML(body);
+
+    // Берём HTML только из контейнера с текстом главы
+    let chapterHtml = $('.chapter-content').html() || '';
+
+    // Убираем скрипты (в том числе блоки рекламы)
+    chapterHtml = chapterHtml.replace(
+      /<script[^>]*>[\s\S]*?<\/script>/gim,
+      '',
     );
-    let chapterText =
-      body.match(/<article id="([\s\S]*?)<\/article>/)?.[0] || '';
-    chapterText = chapterText.replace(/<script[^>]*>[\s\S]*?<\/script>/gim, '');
 
-    if (chapterText.includes('<img')) {
-      return chapterText.replace(/srcset="([^"]+)"/g, (match, src) => {
-        if (!src) return match;
-        const bestlink = src
-          .split(' ')
-          .filter((url: string) => url.startsWith('http'))
-          .pop();
+    // Если нужно, можно также вырезать обёртки рекламы по классу:
+    chapterHtml = chapterHtml.replace(
+      /<div class="pc-adv">[\s\S]*?<\/div>/gim,
+      '',
+    );
 
-        if (bestlink) {
-          return `src="${bestlink}"`;
-        }
-        return match;
-      });
+    // Обработка картинок с srcset, как у тебя было
+    if (chapterHtml.includes('<img')) {
+      chapterHtml = chapterHtml.replace(
+        /srcset="([^"]+)"/g,
+        (match, src) => {
+          if (!src) return match;
+          const bestlink = src
+            .split(' ')
+            .filter((url: string) => url.startsWith('http'))
+            .pop();
+          return bestlink ? `src="${bestlink}"` : match;
+        },
+      );
     }
 
-    return chapterText;
+    return chapterHtml;
   }
+
 
   async searchNovels(
     searchTerm: string,
