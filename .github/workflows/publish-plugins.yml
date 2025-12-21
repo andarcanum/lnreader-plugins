@@ -13,6 +13,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: true
+  
+permissions:
+  contents: write
 
 jobs:
   publish:
@@ -21,8 +24,6 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.REPO_SCOPED_TOKEN }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
