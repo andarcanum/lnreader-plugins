@@ -1,5 +1,5 @@
 import { fetchApi } from '@libs/fetch';
-import { Filters, FilterTypes } from '@libs/filterInputs';
+import { Filters } from '@libs/filterInputs';
 import { Plugin } from '@/types/plugin';
 import { NovelStatus } from '@libs/novelStatus';
 import { load as parseHTML } from 'cheerio';
@@ -29,6 +29,14 @@ class IfreedomPlugin implements Plugin.PluginBase {
     this.filters = metadata.filters;
   }
 
+  get headers() {
+    return {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+      Referer: this.site + '/vse-knigi/',
+    };
+  }
+
   async popularNovels(
     page: number,
     {
@@ -51,18 +59,32 @@ class IfreedomPlugin implements Plugin.PluginBase {
 
     url += '&bpage=' + page;
 
-    const body = await fetchApi(url).then(res => res.text());
+    const body = await fetchApi(url, { headers: this.headers }).then(res =>
+      res.text(),
+    );
     const loadedCheerio = parseHTML(body);
 
-    const novels: Plugin.NovelItem[] = loadedCheerio(
-      'div.one-book-home > div.img-home a',
-    )
-      .map((index, element) => ({
-        name: loadedCheerio(element).attr('title') || '',
-        cover: loadedCheerio(element).find('img').attr('src'),
-        path:
-          loadedCheerio(element).attr('href')?.replace?.(this.site, '') || '',
-      }))
+    const novels: Plugin.NovelItem[] = loadedCheerio('div.item-book-slide')
+      .map((index, element) => {
+        const el = loadedCheerio(element);
+
+        const linkEl = el.find('a.link-book-slide').first();
+        const href = linkEl.attr('href') || '';
+
+        const cover =
+          el.find('.block-book-slide-img img').attr('src') || '';
+
+        const name =
+          el.find('.block-book-slide-title').text().trim() ||
+          linkEl.attr('title') ||
+          linkEl.text().trim();
+
+        return {
+          name,
+          cover,
+          path: href.replace(this.site, ''),
+        };
+      })
       .get()
       .filter(novel => novel.name && novel.path);
 
@@ -70,7 +92,9 @@ class IfreedomPlugin implements Plugin.PluginBase {
   }
 
   async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
-    const body = await fetchApi(this.site + novelPath).then(res => res.text());
+    const body = await fetchApi(this.site + novelPath, {
+      headers: this.headers,
+    }).then(res => res.text());
     const loadedCheerio = parseHTML(body);
 
     const novel: Plugin.SourceNovel = {
@@ -136,9 +160,9 @@ class IfreedomPlugin implements Plugin.PluginBase {
   }
 
   async parseChapter(chapterPath: string): Promise<string> {
-    const body = await fetchApi(this.site + chapterPath).then(res =>
-      res.text(),
-    );
+    const body = await fetchApi(this.site + chapterPath, {
+      headers: this.headers,
+    }).then(res => res.text());
     let chapterText =
       body.match(/<article id="([\s\S]*?)<\/article>/)?.[0] || '';
     chapterText = chapterText.replace(/<script[^>]*>[\s\S]*?<\/script>/gim, '');
@@ -171,18 +195,33 @@ class IfreedomPlugin implements Plugin.PluginBase {
       encodeURIComponent(searchTerm) +
       '&bpage=' +
       page;
-    const result = await fetchApi(url).then(res => res.text());
+
+    const result = await fetchApi(url, { headers: this.headers }).then(res =>
+      res.text(),
+    );
     const loadedCheerio = parseHTML(result);
 
-    const novels: Plugin.NovelItem[] = loadedCheerio(
-      'div.one-book-home > div.img-home a',
-    )
-      .map((index, element) => ({
-        name: loadedCheerio(element).attr('title') || '',
-        cover: loadedCheerio(element).find('img').attr('src'),
-        path:
-          loadedCheerio(element).attr('href')?.replace?.(this.site, '') || '',
-      }))
+    const novels: Plugin.NovelItem[] = loadedCheerio('div.item-book-slide')
+      .map((index, element) => {
+        const el = loadedCheerio(element);
+
+        const linkEl = el.find('a.link-book-slide').first();
+        const href = linkEl.attr('href') || '';
+
+        const cover =
+          el.find('.block-book-slide-img img').attr('src') || '';
+
+        const name =
+          el.find('.block-book-slide-title').text().trim() ||
+          linkEl.attr('title') ||
+          linkEl.text().trim();
+
+        return {
+          name,
+          cover,
+          path: href.replace(this.site, ''),
+        };
+      })
       .get()
       .filter(novel => novel.name && novel.path);
 
@@ -220,3 +259,5 @@ class IfreedomPlugin implements Plugin.PluginBase {
     return dateString || null;
   };
 }
+
+export default IfreedomPlugin;
