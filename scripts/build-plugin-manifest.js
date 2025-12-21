@@ -22,7 +22,7 @@ import { minify } from './terser.js';
 const USERNAME = 'andreykolesnikov';
 const REPO = 'lnreader-plugins';
 const CURRENT_BRANCH = 'plugins/v3.0.0'; // Твоя ветка релиза
-const USER_CONTENT_LINK = `https://raw.githubusercontent.com/${USERNAME}/${REPO}/${CURRENT_BRANCH}/`; 
+const USER_CONTENT_LINK = `https://raw.githubusercontent.com/${USERNAME}/${REPO}/${CURRENT_BRANCH}`; 
 // Важно: добавь /.dist в конец, если файлы лежат внутри .dist, 
 // или убери, если в корне ветки.
 // Судя по твоим прошлым сообщениям, файлы лежат внутри .dist
