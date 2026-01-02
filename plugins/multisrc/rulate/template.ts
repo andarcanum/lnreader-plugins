@@ -25,7 +25,7 @@ class RulatePlugin implements Plugin.PluginBase {
     this.id = metadata.id;
     this.name = metadata.sourceName;
     this.icon = `multisrc/rulate/${metadata.id.toLowerCase()}/icon.png`;
-    // Гарантируем, что site не undefined и без слеша на конце
+    // Гарантируем, что site не undefined и без слеша на конце.
     this.site = (metadata.sourceSite || 'https://erolate.com').replace(/\/+$/, '');
     this.version = '1.0.' + (2 + metadata.versionIncrements);
     this.filters = metadata.filters;
