@@ -14,6 +14,9 @@ class FreeWebNovelPlugin implements Plugin.PluginBase {
   lastSearch: number | null = null;
   searchInterval = 3400;
 
+  // Кеш для всех глав (для ленивой загрузки)
+  cachedChapters: Plugin.ChapterItem[] | null = null;
+
   async sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
@@ -368,6 +371,20 @@ class FreeWebNovelPlugin implements Plugin.PluginBase {
     }
 
     return novel as Plugin.SourceNovel;
+  }
+
+  async parsePage(novelPath: string, page: string): Promise<Plugin.SourcePage> {
+    if (!this.cachedChapters) {
+      return { chapters: [] };
+    }
+
+    const pageNum = parseInt(page, 10) || 1;
+    const startIndex = (pageNum - 1) * 100;
+    const endIndex = Math.min(startIndex + 100, this.cachedChapters.length);
+
+    return {
+      chapters: this.cachedChapters.slice(startIndex, endIndex),
+    };
   }
 
   async parseChapter(chapterPath: string): Promise<string> {
