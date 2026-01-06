@@ -31,7 +31,7 @@ class RulatePlugin implements Plugin.PluginBase {
     this.filters = metadata.filters;
   }
 
-  // Вспомогательный геттер для заголовков.
+  // Вспомогательный геттер для заголовков
   get headers() {
     return {
       Referer: (this.site || 'https://erolate.com').replace(/\/+$/, ''),
