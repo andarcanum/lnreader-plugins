@@ -4,10 +4,25 @@ import { Filters, FilterTypes } from '@libs/filterInputs';
 import { Plugin } from '@/types/plugin';
 import { storage } from '@libs/storage';
 
+type RankingResponse = {
+  code: number;
+  data: {
+    bookItems: {
+      rankNo: number;
+      bookId: string;
+      bookName: string;
+      description: string;
+      categoryName: string;
+      authorName: string;
+      coverUpdateTime: number;
+    }[];
+  };
+};
+
 class WebnovelRating implements Plugin.PluginBase {
   id = 'webnovelrating';
   name = 'Webnovel Rating';
-  version = '1.0.0';
+  version = '1.0.1';
   icon = 'src/en/webnovel/icon.png';
   site = 'https://www.webnovel.com';
   headers = {
@@ -28,56 +43,154 @@ class WebnovelRating implements Plugin.PluginBase {
     },
   };
 
+  private csrfToken: string | null = null;
+
+  private async getCsrfToken(): Promise<string> {
+    if (this.csrfToken) return this.csrfToken;
+
+    const result = await fetchApi(this.site, {
+      headers: this.headers,
+    });
+    const cookies = result.headers.get('set-cookie') || '';
+    const match = cookies.match(/_csrfToken=([^;]+)/);
+    if (match) {
+      this.csrfToken = match[1];
+      return this.csrfToken;
+    }
+
+    const body = await result.text();
+    const tokenMatch = body.match(/_csrfToken['"]\s*:\s*['"]([^'"]+)['"]/);
+    if (tokenMatch) {
+      this.csrfToken = tokenMatch[1];
+      return this.csrfToken;
+    }
+
+    return '';
+  }
+
+  private getTimeTypeValue(timePeriod: string): string {
+    const timeTypeMap: Record<string, string> = {
+      monthly: '4',
+      season: '4',
+      bi_annual: '3',
+      annual: '3',
+      all_time: '1',
+    };
+    return timeTypeMap[timePeriod] || '3';
+  }
+
+  private getRankName(rankingType: string): string {
+    const rankNameMap: Record<string, string> = {
+      power_rank: 'Power',
+      best_sellers: 'Trending',
+      collection_rank: 'Collect',
+      popular_rank: 'Popular',
+      update_rank: 'Update',
+      engagement_rank: 'Active',
+      fandom_rank: 'Fandom',
+    };
+    return rankNameMap[rankingType] || 'Power';
+  }
+
   async popularNovels(
     pageNo: number,
     { filters }: Plugin.PopularNovelsOptions<typeof this.filters>,
   ): Promise<Plugin.NovelItem[]> {
-    if (pageNo > 1) return [];
-
     const rankingType = filters?.ranking_type?.value || 'power_rank';
-    const timePeriod = filters?.time_period?.value || 'monthly';
+    const timePeriod = filters?.time_period?.value || 'bi_annual';
+    const sourceType = filters?.source_type?.value || '0';
+    const sex = filters?.sex?.value || '1';
+    const signStatus = filters?.sign_status?.value || '0';
 
-    let url: string;
-
-    if (rankingType === 'power_rank' || rankingType === 'best_sellers') {
-      url = `${this.site}/ranking/novel/${timePeriod}/${rankingType}`;
-    } else {
-      url = `${this.site}/ranking/novel/all_time/${rankingType}`;
-    }
-
-    const result = await fetchApi(url, {
-      headers: this.headers,
-    });
-    const body = await result.text();
-    const loadedCheerio = parseHTML(body);
-
-    const novels: Plugin.NovelItem[] = [];
-
-    loadedCheerio('.j_rank_wrapper section').each((_, ele) => {
-      const novelLink = loadedCheerio(ele).find('a[href^="/book/"]').first();
-      const novelPath = novelLink.attr('href');
-      if (!novelPath) return;
-
-      const novelName =
-        loadedCheerio(ele).find('h3 a.c_l').attr('title') ||
-        loadedCheerio(ele).find('h3 a.c_l').text().trim() ||
-        'No Title Found';
-
-      const imgElement = loadedCheerio(ele).find('.g_thumb img');
-      let novelCover =
-        imgElement.attr('src') || imgElement.attr('data-original') || '';
-      if (novelCover && !novelCover.startsWith('http')) {
-        novelCover = 'https:' + novelCover;
+    if (pageNo === 1) {
+      let url: string;
+      if (rankingType === 'power_rank' || rankingType === 'best_sellers') {
+        url = `${this.site}/ranking/novel/${timePeriod}/${rankingType}`;
+      } else {
+        url = `${this.site}/ranking/novel/all_time/${rankingType}`;
       }
 
-      novels.push({
-        name: novelName,
-        cover: novelCover,
-        path: novelPath,
+      const result = await fetchApi(url, {
+        headers: this.headers,
       });
+      const body = await result.text();
+
+      const tokenMatch = body.match(/_csrfToken=([^;'"&]+)/);
+      if (tokenMatch) {
+        this.csrfToken = decodeURIComponent(tokenMatch[1]);
+      }
+
+      const loadedCheerio = parseHTML(body);
+      const novels: Plugin.NovelItem[] = [];
+
+      loadedCheerio('.j_rank_wrapper section').each((_, ele) => {
+        const novelLink = loadedCheerio(ele).find('a[href^="/book/"]').first();
+        const novelPath = novelLink.attr('href');
+        if (!novelPath) return;
+
+        const novelName =
+          loadedCheerio(ele).find('h3 a.c_l').attr('title') ||
+          loadedCheerio(ele).find('h3 a.c_l').text().trim() ||
+          'No Title Found';
+
+        const imgElement = loadedCheerio(ele).find('.g_thumb img');
+        let novelCover =
+          imgElement.attr('src') || imgElement.attr('data-original') || '';
+        if (novelCover && !novelCover.startsWith('http')) {
+          novelCover = 'https:' + novelCover;
+        }
+
+        novels.push({
+          name: novelName,
+          cover: novelCover,
+          path: novelPath,
+        });
+      });
+
+      return novels;
+    }
+
+    if (!this.csrfToken) {
+      await this.getCsrfToken();
+    }
+
+    const timeType = this.getTimeTypeValue(timePeriod);
+    const rankName = this.getRankName(rankingType);
+
+    const params = new URLSearchParams({
+      _csrfToken: this.csrfToken || '',
+      pageIndex: pageNo.toString(),
+      rankId: rankingType,
+      listType: '3',
+      type: '1',
+      rankName: rankName,
+      timeType: timeType,
+      sourceType: sourceType,
+      sex: sex,
+      signStatus: signStatus,
     });
 
-    return novels;
+    const apiUrl = `${this.site}/go/pcm/category/getRankList?${params.toString()}`;
+
+    const result = await fetchApi(apiUrl, {
+      headers: {
+        ...this.headers,
+        Accept: 'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With': 'XMLHttpRequest',
+      },
+    });
+
+    const data: RankingResponse = await result.json();
+
+    if (data.code !== 0 || !data.data?.bookItems) {
+      return [];
+    }
+
+    return data.data.bookItems.map(book => ({
+      name: book.bookName,
+      cover: `https://book-pic.webnovel.com/bookcover/${book.bookId}?imageMogr2/thumbnail/150`,
+      path: `/book/${book.bookName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}_${book.bookId}`,
+    }));
   }
 
   async parseChapters(novelPath: string): Promise<Plugin.ChapterItem[]> {
@@ -231,13 +344,41 @@ class WebnovelRating implements Plugin.PluginBase {
     },
     time_period: {
       label: 'Time Period (Power/Trending only)',
-      value: 'monthly',
+      value: 'bi_annual',
       options: [
         { label: 'Monthly (≤30 Days)', value: 'monthly' },
         { label: 'Season (31-90 Days)', value: 'season' },
         { label: 'Bi-annual (91-180 Days)', value: 'bi_annual' },
         { label: 'Annual (181-365 Days)', value: 'annual' },
         { label: 'All-time (>365 Days)', value: 'all_time' },
+      ],
+      type: FilterTypes.Picker,
+    },
+    source_type: {
+      label: 'Content Type',
+      value: '0',
+      options: [
+        { label: 'All', value: '0' },
+        { label: 'Translate', value: '1' },
+        { label: 'Original', value: '2' },
+      ],
+      type: FilterTypes.Picker,
+    },
+    sex: {
+      label: 'Reading Preference',
+      value: '1',
+      options: [
+        { label: 'Male', value: '1' },
+        { label: 'Female', value: '2' },
+      ],
+      type: FilterTypes.Picker,
+    },
+    sign_status: {
+      label: 'Contract Type',
+      value: '0',
+      options: [
+        { label: 'All', value: '0' },
+        { label: 'Contracted', value: '1' },
       ],
       type: FilterTypes.Picker,
     },
