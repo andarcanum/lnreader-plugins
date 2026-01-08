@@ -39,10 +39,10 @@ class WebnovelRating implements Plugin.PluginBase {
 
     let url: string;
 
-    if (rankingType === 'power_rank' || rankingType === 'trending_rank') {
+    if (rankingType === 'power_rank' || rankingType === 'best_sellers') {
       url = `${this.site}/ranking/novel/${timePeriod}/${rankingType}`;
     } else {
-      url = `${this.site}/ranking/novel/${rankingType}`;
+      url = `${this.site}/ranking/novel/all_time/${rankingType}`;
     }
 
     const result = await fetchApi(url, {
@@ -220,11 +220,11 @@ class WebnovelRating implements Plugin.PluginBase {
       value: 'power_rank',
       options: [
         { label: 'Power', value: 'power_rank' },
-        { label: 'Trending', value: 'trending_rank' },
-        { label: 'Collect', value: 'collect_rank' },
+        { label: 'Trending', value: 'best_sellers' },
+        { label: 'Collect', value: 'collection_rank' },
         { label: 'Popular', value: 'popular_rank' },
         { label: 'Update', value: 'update_rank' },
-        { label: 'Active', value: 'active_rank' },
+        { label: 'Active', value: 'engagement_rank' },
         { label: 'Fandom', value: 'fandom_rank' },
       ],
       type: FilterTypes.Picker,
@@ -233,8 +233,11 @@ class WebnovelRating implements Plugin.PluginBase {
       label: 'Time Period (Power/Trending only)',
       value: 'monthly',
       options: [
-        { label: 'Monthly', value: 'monthly' },
-        { label: 'All-time', value: 'all_time' },
+        { label: 'Monthly (≤30 Days)', value: 'monthly' },
+        { label: 'Season (31-90 Days)', value: 'season' },
+        { label: 'Bi-annual (91-180 Days)', value: 'bi_annual' },
+        { label: 'Annual (181-365 Days)', value: 'annual' },
+        { label: 'All-time (>365 Days)', value: 'all_time' },
       ],
       type: FilterTypes.Picker,
     },
