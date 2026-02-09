@@ -2,6 +2,7 @@ import { Plugin } from '@/types/plugin';
 import { FilterTypes, Filters } from '@libs/filterInputs';
 import { fetchApi } from '@libs/fetch';
 import { NovelStatus } from '@libs/novelStatus';
+import { proseMirrorToHtml } from '@libs/proseMirrorToHtml';
 import dayjs from 'dayjs';
 
 class novelOvh implements Plugin.PluginBase {
@@ -104,9 +105,12 @@ class novelOvh implements Plugin.PluginBase {
     const image = Object.fromEntries(
       book?.pages?.map(({ id, image }) => [id, image]) || [],
     );
-
-    const chapterText = this.jsonToHtml(book.content.content || [], image);
-    return chapterText;
+    const content = book?.content?.content;
+    if (!Array.isArray(content)) return '';
+    return proseMirrorToHtml(content, {
+      resolveImageUrls: node =>
+        resolveNovelOvhImageUrls(node.attrs as Attrs | undefined, image),
+    });
   }
 
   async searchNovels(searchTerm: string): Promise<Plugin.NovelItem[]> {
@@ -124,100 +128,6 @@ class novelOvh implements Plugin.PluginBase {
 
     return novels;
   }
-
-  jsonToHtml = (
-    json: ContentEntity[],
-    image: Record<string, string>,
-    html = '',
-  ) => {
-    json.forEach(element => {
-      switch (element.type) {
-        case 'image':
-          if (element.attrs?.pages?.[0]) {
-            html += `<img src="${image[element.attrs.pages[0]]}"/>`;
-          }
-          break;
-        case 'hardBreak':
-          html += '<br>';
-          break;
-        case 'horizontalRule':
-        case 'delimiter':
-          html += '<h2 style="text-align: center">***</h2>';
-          break;
-        case 'paragraph':
-          html +=
-            '<p>' +
-            (element.content
-              ? this.jsonToHtml(element.content, image)
-              : '<br>') +
-            '</p>';
-          break;
-        case 'orderedList':
-          html +=
-            '<ol>' +
-            (element.content
-              ? this.jsonToHtml(element.content, image)
-              : '<br>') +
-            '</ol>';
-          break;
-        case 'listItem':
-          html +=
-            '<li>' +
-            (element.content
-              ? this.jsonToHtml(element.content, image)
-              : '<br>') +
-            '</li>';
-          break;
-        case 'blockquote':
-          html +=
-            '<blockquote>' +
-            (element.content
-              ? this.jsonToHtml(element.content, image)
-              : '<br>') +
-            '</blockquote>';
-          break;
-        case 'italic':
-          html +=
-            '<i>' +
-            (element.content
-              ? this.jsonToHtml(element.content, image)
-              : '<br>') +
-            '</i>';
-          break;
-        case 'bold':
-          html +=
-            '<b>' +
-            (element.content
-              ? this.jsonToHtml(element.content, image)
-              : '<br>') +
-            '</b>';
-          break;
-        case 'underline':
-          html +=
-            '<u>' +
-            (element.content
-              ? this.jsonToHtml(element.content, image)
-              : '<br>') +
-            '</u>';
-          break;
-        case 'heading':
-          html +=
-            '<h2>' +
-            (element.content
-              ? this.jsonToHtml(element.content, image)
-              : '<br>') +
-            '</h2>';
-          break;
-        case 'text':
-          html += element.text;
-          break;
-        default:
-          html += JSON.stringify(element, null, '\t'); //maybe I missed something.
-          break;
-      }
-    });
-    return html;
-  };
 
   resolveUrl = (path: string) => this.site + '/content/' + path;
 
@@ -240,6 +150,23 @@ class novelOvh implements Plugin.PluginBase {
 }
 
 export default new novelOvh();
+
+function resolveNovelOvhImageUrls(
+  attrs: Attrs | undefined,
+  imageMap: Record<string, string>,
+): string[] {
+  if (!attrs) return [];
+  if (attrs.pages?.length) {
+    const urls = attrs.pages.map(id => imageMap[id]).filter(Boolean);
+    if (urls.length) {
+      return urls;
+    }
+  }
+  if (attrs.src?.trim()) {
+    return [attrs.src.trim()];
+  }
+  return [];
+}
 
 type BooksEntity = {
   id: string;
@@ -464,11 +391,12 @@ type ContentEntity = {
   text?: string | null;
   type: string;
   attrs?: Attrs | null;
-  content?: Content[] | null;
+  content?: ContentEntity[] | null;
 };
 type Attrs = {
   textAlign?: string;
-  pages?: [string];
+  pages?: string[];
+  src?: string;
 };
 type PagesEntity = {
   id: string;

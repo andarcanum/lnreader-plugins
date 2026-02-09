@@ -82,7 +82,7 @@ class RNBH implements Plugin.PluginBase {
       path: novelPath,
       name: data.names.rus || data.names.eng || '',
       cover: data.posters.medium,
-      summary: data.description.trim(),
+      summary: stripHtml(data.description).trim(),
       author: data?.authors?.[0]?.name_eng || '',
       status: statusKey[data.status.id] || NovelStatus.Unknown,
     };
@@ -1143,6 +1143,13 @@ class RNBH implements Plugin.PluginBase {
 }
 
 export default new RNBH();
+
+function stripHtml(value: string): string {
+  return String(value || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 type responseNovels = {
   id: number;

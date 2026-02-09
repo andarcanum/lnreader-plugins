@@ -4,6 +4,7 @@ import { defaultCover } from '@libs/defaultCover';
 import { fetchApi } from '@libs/fetch';
 import { NovelStatus } from '@libs/novelStatus';
 import { storage, localStorage } from '@libs/storage';
+import { proseMirrorToHtml } from '@libs/proseMirrorToHtml';
 import dayjs from 'dayjs';
 
 const statusKey: Record<number, string> = {
@@ -208,18 +209,27 @@ class RLIB implements Plugin.PluginBase {
         { headers: this.user?.token },
       ).then(res => res.json());
       const content = result?.data?.content;
+      const attachmentUrls = createRanobeLibAttachmentMap(
+        result.data.attachments || [],
+      );
       if (content?.type == 'doc' && Array.isArray(content.content)) {
-        chapterText = jsonToHtml(
-          content.content,
-          result.data.attachments || [],
-        );
+        chapterText = proseMirrorToHtml(content.content, {
+          resolveImageUrls: node =>
+            resolveRanobeLibImageUrls(
+              node.attrs as Attrs | undefined,
+              attachmentUrls,
+            ),
+        });
+      } else if (Array.isArray(content?.content)) {
+        chapterText = proseMirrorToHtml(content.content, {
+          resolveImageUrls: node =>
+            resolveRanobeLibImageUrls(
+              node.attrs as Attrs | undefined,
+              attachmentUrls,
+            ),
+        });
       } else if (typeof content == 'string') {
         chapterText = content;
-      } else if (Array.isArray(content?.content)) {
-        chapterText = jsonToHtml(
-          content.content,
-          result.data.attachments || [],
-        );
       }
     }
     return chapterText;
@@ -506,142 +516,36 @@ class RLIB implements Plugin.PluginBase {
 
 export default new RLIB();
 
-function jsonToHtml(json: HTML[], images: Attachment[], html = '') {
-  json.forEach(element => {
-    switch (element.type) {
-      case 'doc':
-        html += element.content ? jsonToHtml(element.content, images) : '';
-        break;
-      case 'hardBreak':
-        html += '<br>';
-        break;
-      case 'horizontalRule':
-        html += '<hr>';
-        break;
-      case 'image':
-        if (element.attrs?.images?.length) {
-          element.attrs.images.forEach(
-            ({ image }: { image: string | number }) => {
-              const file = images.find(
-                (f: Attachment) => f.name == image || f.id == image,
-              );
-              if (file) {
-                html += `<img src='${file.url}'>`;
-              }
-            },
-          );
-        } else if (element.attrs) {
-          const attrs = Object.entries(element.attrs)
-            .filter(attr => attr?.[1])
-            .map(attr => `${attr[0]}="${attr[1]}"`);
-          html += '<img ' + attrs.join(' ') + '>';
-        }
-        break;
-      case 'paragraph':
-        html +=
-          '<p>' +
-          (element.content ? jsonToHtml(element.content, images) : '<br>') +
-          '</p>';
-        break;
-      case 'bulletList':
-        html +=
-          '<ul>' +
-          (element.content ? jsonToHtml(element.content, images) : '<br>') +
-          '</ul>';
-        break;
-      case 'orderedList':
-        html +=
-          '<ol>' +
-          (element.content ? jsonToHtml(element.content, images) : '<br>') +
-          '</ol>';
-        break;
-      case 'listItem':
-        html +=
-          '<li>' +
-          (element.content ? jsonToHtml(element.content, images) : '<br>') +
-          '</li>';
-        break;
-      case 'blockquote':
-        html +=
-          '<blockquote>' +
-          (element.content ? jsonToHtml(element.content, images) : '<br>') +
-          '</blockquote>';
-        break;
-      case 'italic':
-        html +=
-          '<i>' +
-          (element.content ? jsonToHtml(element.content, images) : '<br>') +
-          '</i>';
-        break;
-      case 'bold':
-        html +=
-          '<b>' +
-          (element.content ? jsonToHtml(element.content, images) : '<br>') +
-          '</b>';
-        break;
-      case 'underline':
-        html +=
-          '<u>' +
-          (element.content ? jsonToHtml(element.content, images) : '<br>') +
-          '</u>';
-        break;
-      case 'heading':
-        const level = Number(element.attrs?.level);
-        const headingLevel = level >= 1 && level <= 6 ? level : 2;
-        html +=
-          `<h${headingLevel}>` +
-          (element.content ? jsonToHtml(element.content, images) : '<br>') +
-          `</h${headingLevel}>`;
-        break;
-      case 'text':
-        html += applyTextMarks(escapeHtml(element.text || ''), element.marks);
-        break;
-      default:
-        html += element.content ? jsonToHtml(element.content, images) : '';
-        break;
-    }
+function createRanobeLibAttachmentMap(
+  attachments: Attachment[],
+): Record<string, string> {
+  const byReference: Record<string, string> = {};
+  attachments.forEach(file => {
+    if (!file?.url) return;
+    if (file.id) byReference[String(file.id)] = file.url;
+    if (file.name) byReference[String(file.name)] = file.url;
+    if (file.filename) byReference[String(file.filename)] = file.url;
   });
-  return html;
+  return byReference;
 }
 
-function applyTextMarks(text: string, marks?: Mark[]): string {
-  if (!marks?.length) {
-    return text;
-  }
-  return marks.reduce((acc, mark) => {
-    switch (mark.type) {
-      case 'bold':
-        return `<b>${acc}</b>`;
-      case 'italic':
-        return `<i>${acc}</i>`;
-      case 'underline':
-        return `<u>${acc}</u>`;
-      case 'strike':
-        return `<s>${acc}</s>`;
-      case 'code':
-        return `<code>${acc}</code>`;
-      case 'link': {
-        const href = mark.attrs?.href;
-        if (!href) {
-          return acc;
-        }
-        return `<a href="${escapeHtmlAttr(href)}">${acc}</a>`;
-      }
-      default:
-        return acc;
+function resolveRanobeLibImageUrls(
+  attrs: Attrs | undefined,
+  attachmentUrls: Record<string, string>,
+): string[] {
+  if (!attrs) return [];
+  if (attrs.images?.length) {
+    const urls = attrs.images
+      .map(({ image }) => attachmentUrls[String(image)])
+      .filter(Boolean);
+    if (urls.length) {
+      return urls;
     }
-  }, text);
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-}
-
-function escapeHtmlAttr(value: string): string {
-  return escapeHtml(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+  if (attrs.src?.trim()) {
+    return [attrs.src.trim()];
+  }
+  return [];
 }
 
 type HTML = {
@@ -649,7 +553,6 @@ type HTML = {
   content?: HTML[];
   attrs?: Attrs;
   text?: string;
-  marks?: Mark[];
 };
 
 type Attrs = {
@@ -657,15 +560,6 @@ type Attrs = {
   alt?: string | null;
   title?: string | null;
   images?: { image: string | number }[];
-  level?: number;
-  href?: string;
-};
-
-type Mark = {
-  type: string;
-  attrs?: {
-    href?: string;
-  };
 };
 
 type authorization = {

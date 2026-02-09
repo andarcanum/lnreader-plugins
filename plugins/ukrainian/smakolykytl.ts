@@ -1,6 +1,7 @@
 import { Plugin } from '@/types/plugin';
 import { fetchApi } from '@libs/fetch';
 import { NovelStatus } from '@libs/novelStatus';
+import { proseMirrorToHtml } from '@libs/proseMirrorToHtml';
 import dayjs from 'dayjs';
 
 class Smakolykytl implements Plugin.PluginBase {
@@ -78,10 +79,20 @@ class Smakolykytl implements Plugin.PluginBase {
     const id = chapterPath.split('/').pop();
     const result = await fetchApi(this.apiSite + '/chapters/' + id);
     const json = (await result.json()) as response;
-    const chapterRaw: HTML[] = JSON.parse(json?.chapter?.content || '[]');
-
-    const chapterText = jsonToHtml(chapterRaw);
-    return chapterText;
+    const chapterRaw: HTML[] | HTML | string = JSON.parse(
+      json?.chapter?.content || '[]',
+    );
+    if (Array.isArray(chapterRaw)) {
+      return proseMirrorToHtml(chapterRaw);
+    }
+    if (
+      chapterRaw &&
+      typeof chapterRaw == 'object' &&
+      Array.isArray(chapterRaw.content)
+    ) {
+      return proseMirrorToHtml(chapterRaw.content);
+    }
+    return typeof chapterRaw == 'string' ? chapterRaw : '';
   }
 
   async searchNovels(searchTerm: string): Promise<Plugin.NovelItem[]> {
@@ -107,40 +118,6 @@ class Smakolykytl implements Plugin.PluginBase {
 }
 
 export default new Smakolykytl();
-
-function jsonToHtml(json: HTML[], html = '') {
-  json.forEach(element => {
-    switch (element.type) {
-      case 'hardBreak':
-        html += '<br>';
-        break;
-      case 'horizontalRule':
-        html += '<hr>';
-        break;
-      case 'image':
-        if (element.attrs) {
-          const attrs = Object.entries(element.attrs)
-            .filter(attr => attr?.[1])
-            .map(attr => `${attr[0]}="${attr[1]}"`);
-          html += '<img ' + attrs.join('; ') + '>';
-        }
-        break;
-      case 'paragraph':
-        html +=
-          '<p>' +
-          (element.content ? jsonToHtml(element.content) : '<br>') +
-          '</p>';
-        break;
-      case 'text':
-        html += element.text;
-        break;
-      default:
-        html += JSON.stringify(element, null, '\t'); //maybe I missed something.
-        break;
-    }
-  });
-  return html;
-}
 
 type response = {
   projects?: TopLevelProject[];
