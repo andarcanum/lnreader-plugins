@@ -4,19 +4,20 @@ import languages from './languages.js';
 import { execSync } from 'child_process';
 import { minify } from './terser.js';
 
-// const REMOTE = execSync('git remote get-url origin')
-//   .toString()
-//   .replace(/[\s\n]/g, '');
-// const CURRENT_BRANCH = execSync('git branch --show-current')
-//   .toString()
-//   .replace(/[\s\n]/g, '');
-// const matched = REMOTE.match(/([^:/]+?)\/([^/.]+)(\.git)?$/);
-// if (!matched) throw Error('Cant parse git url');
-// const USERNAME = matched[1];
-// const REPO = matched[2];
-// const USER_CONTENT_LINK = process.env.USER_CONTENT_BASE
-//   ? process.env.USER_CONTENT_BASE
-//   : `https://raw.githubusercontent.com/${USERNAME}/${REPO}/${CURRENT_BRANCH}`;
+const REMOTE = execSync('git remote get-url origin')
+  .toString()
+  .replace(/[\s\n]/g, '');
+const CURRENT_BRANCH = execSync('git branch --show-current')
+  .toString()
+  .replace(/[\s\n]/g, '');
+const BRANCH = process.env.BRANCH ? process.env.BRANCH : CURRENT_BRANCH;
+const matched = REMOTE.match(/([^:/]+?)\/([^/.]+)(\.git)?$/);
+if (!matched) throw Error('Cant parse git url');
+const USERNAME = matched[1];
+const REPO = matched[2];
+const USER_CONTENT_LINK = process.env.USER_CONTENT_BASE
+  ? process.env.USER_CONTENT_BASE
+  : `https://raw.githubusercontent.com/${USERNAME}/${REPO}/${BRANCH}`;
 
 // Базовый URL ветки релиза
 const REPO_BASE = "https://raw.githubusercontent.com/andreykolesnikov/lnreader-plugins/plugins/v3.0.0";
