@@ -164,7 +164,7 @@ const genreOptions = [
 class HexNovels implements Plugin.PluginBase {
   id = 'hexnovels';
   name = 'HexNovels';
-  icon = 'src/en/hexnovels/icon.png';
+  icon = 'src/ru/hexnovels/icon.png';
   site = 'https://hexnovels.me';
   api = 'https://api.hexnovels.me';
   version = '1.0.2';
