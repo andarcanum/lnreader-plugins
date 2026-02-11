@@ -16,57 +16,112 @@ class TL implements Plugin.PluginBase {
   id = 'TL';
   name = 'NovelTL';
   site = 'https://novel.tl';
-  version = '1.0.1';
+  version = '1.0.2';
   icon = 'src/ru/noveltl/icon.png';
+
+  private readonly graphqlPath = '/api/site/v2/graphql';
+
+  private readonly graphqlHeaders = {
+    Accept: 'application/json, text/plain, */*',
+    'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
+    'Content-Type': 'application/json',
+    Origin: this.site,
+    Referer: this.site + '/',
+  };
+
+  private async requestGraphql(
+    query: string,
+    variables: Record<string, unknown>,
+  ): Promise<response> {
+    return fetchApi(this.site + this.graphqlPath, {
+      method: 'post',
+      headers: this.graphqlHeaders,
+      Referer: this.site + '/',
+      origin: this.site,
+      body: JSON.stringify({
+        query,
+        variables,
+      }),
+    }).then(res => res.json());
+  }
+
+  private toCoverUrl(path?: string): string {
+    if (!path) return defaultCover;
+    if (/^https?:\/\//i.test(path)) return path;
+    if (path.startsWith('/')) return this.site + path;
+    return this.site + '/' + path;
+  }
+
+  private normalizePath(path?: string): string | undefined {
+    if (!path) return undefined;
+    const value = String(path).trim();
+    if (!value) return undefined;
+    if (/^https?:\/\//i.test(value)) return value;
+    if (value.startsWith('//')) return 'https:' + value;
+    if (value.startsWith('/')) return this.site + value;
+    if (value.startsWith('novel.tl/')) return 'https://' + value;
+    return this.site + '/' + value;
+  }
+
+  private parseProjects(data?: Data): Plugin.NovelItem[] {
+    const projectsNode: any = data?.projects;
+    const rawItems: any[] = Array.isArray(projectsNode?.content)
+      ? projectsNode.content
+      : Array.isArray(projectsNode?.items)
+        ? projectsNode.items
+        : Array.isArray(projectsNode)
+          ? projectsNode
+          : [];
+
+    return rawItems
+      .map(item => {
+        const path = this.normalizePath(
+          item?.fullUrl || item?.url || item?.path || item?.slug,
+        );
+        const name = item?.title || item?.name || item?.label || '';
+        if (!path || !name) return null;
+        const coverPath =
+          item?.covers?.[0]?.url || item?.cover?.url || item?.cover;
+        return {
+          name,
+          path,
+          cover: this.toCoverUrl(coverPath),
+        } as Plugin.NovelItem;
+      })
+      .filter((item): item is Plugin.NovelItem => Boolean(item));
+  }
 
   async fetchNovels(
     page: number,
     { filters }: Plugin.PopularNovelsOptions<typeof this.filters>,
     searchTerm?: string,
   ): Promise<Plugin.NovelItem[]> {
-    const { data }: response = await fetchApi(
-      this.site + '/api/site/v2/graphql',
-      {
-        method: 'post',
-        headers: {
-          Accept: 'application/json, text/plain, */*',
-          'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
-          'Content-Type': 'application/json',
+    const filterPayload = {
+      query: searchTerm || undefined,
+      tags: filters.tags?.value?.length ? filters.tags.value : undefined,
+      genres: filters.genres?.value?.length ? filters.genres.value : undefined,
+    };
+
+    const hostnameCandidates = ['novel.tl', this.site, this.site + '/'];
+
+    for (const hostname of hostnameCandidates) {
+      const { data }: response = await this.requestGraphql(
+        'query Projects($hostname:String! $filter:SearchFilter $page:Int $limit:Int){projects(section:{fullUrl:$hostname}filter:$filter page:{pageSize:$limit,pageNumber:$page}){content{title fullUrl covers{url}}}}',
+        {
+          filter: filterPayload,
+          hostname,
+          limit: 40,
+          page,
         },
-        Referer: this.site,
-        body: JSON.stringify({
-          query:
-            'query Projects($hostname:String! $filter:SearchFilter $page:Int $limit:Int){projects(section:{fullUrl:$hostname}filter:$filter page:{pageSize:$limit,pageNumber:$page}){content{title fullUrl covers{url}}}}',
-          variables: {
-            filter: {
-              query: searchTerm || undefined,
-              tags: filters.tags?.value?.length
-                ? filters.tags.value
-                : undefined,
-              genres: filters.genres?.value?.length
-                ? filters.genres.value
-                : undefined,
-            },
-            hostname: 'novel.tl',
-            limit: 40,
-            page,
-          },
-        }),
-      },
-    ).then(res => res.json());
+      );
 
-    const novels: Plugin.NovelItem[] = [];
-    data?.projects?.content?.forEach(novel =>
-      novels.push({
-        name: novel.title,
-        path: novel.fullUrl,
-        cover: novel?.covers?.[0]?.url
-          ? this.site + novel.covers[0].url
-          : defaultCover,
-      }),
-    );
+      const novels = this.parseProjects(data);
+      if (novels.length) {
+        return novels;
+      }
+    }
 
-    return novels;
+    return [];
   }
 
   popularNovels = this.fetchNovels;
@@ -82,32 +137,17 @@ class TL implements Plugin.PluginBase {
   }
 
   async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
-    const { data }: response = await fetchApi(
-      this.site + '/api/site/v2/graphql',
+    const { data }: response = await this.requestGraphql(
+      'query Book($url:String){project(project:{fullUrl:$url}){title translationStatus fullUrl covers{url}persons(langs:["ru","en","*"],roles:["author","illustrator"]){role name{firstName lastName}}genres{nameRu nameEng}tags{nameRu nameEng}annotation{text}subprojects{content{title volumes{content{shortName chapters{title publishDate fullUrl published}}}}}}}',
       {
-        method: 'post',
-        headers: {
-          Accept: 'application/json, text/plain, */*',
-          'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
-          'Content-Type': 'application/json',
-        },
-        Referer: this.site,
-        body: JSON.stringify({
-          query:
-            'query Book($url:String){project(project:{fullUrl:$url}){title translationStatus fullUrl covers{url}persons(langs:["ru","en","*"],roles:["author","illustrator"]){role name{firstName lastName}}genres{nameRu nameEng}tags{nameRu nameEng}annotation{text}subprojects{content{title volumes{content{shortName chapters{title publishDate fullUrl published}}}}}}}',
-          variables: {
-            url: novelPath,
-          },
-        }),
+        url: novelPath,
       },
-    ).then(res => res.json());
+    );
 
     const novel: Plugin.SourceNovel = {
       path: novelPath,
       name: data.project?.title || '',
-      cover: data.project?.covers?.[0]?.url
-        ? this.site + data.project.covers[0].url
-        : defaultCover,
+      cover: this.toCoverUrl(data.project?.covers?.[0]?.url),
       summary: data.project?.annotation?.text,
       status:
         statusKey[data.project?.translationStatus || 'unknown'] ||
@@ -160,28 +200,18 @@ class TL implements Plugin.PluginBase {
   }
 
   async parseChapter(chapterPath: string): Promise<string> {
-    const { data } = await fetchApi(this.site + '/api/site/v2/graphql', {
-      method: 'post',
-      headers: {
-        Accept: 'application/json, text/plain, */*',
-        'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
-        'Content-Type': 'application/json',
+    const { data } = await this.requestGraphql(
+      'query($url:String){chapter(chapter:{fullUrl:$url}){text{text}}}',
+      {
+        url: decodeURI(chapterPath),
       },
-      Referer: this.site,
-      body: JSON.stringify({
-        query:
-          'query($url:String){chapter(chapter:{fullUrl:$url}){text{text}}}',
-        variables: {
-          url: decodeURI(chapterPath),
-        },
-      }),
-    }).then(res => res.json());
+    );
 
     const chapterText = data.chapter?.text?.text || '';
     return chapterText;
   }
 
-  resolveUrl = (path: string) => 'https://' + path;
+  resolveUrl = (path: string) => this.normalizePath(path) || this.site;
 
   filters = {
     tags: {
