@@ -56,6 +56,7 @@ type HexReaderChapter = {
 };
 
 type HexRichAttachment = {
+  id?: string;
   image?: string;
 };
 
@@ -68,6 +69,11 @@ type HexCatalogBook = {
   slug?: string;
   poster?: string;
   name?: string | Record<string, unknown>;
+};
+
+type HexRichAttachmentApiItem = {
+  id?: string;
+  image?: string;
 };
 
 const statusMap: Record<string, string> = {
@@ -179,7 +185,7 @@ class HexNovels implements Plugin.PluginBase {
   icon = 'src/ru/hexnovels/icon.png';
   site = 'https://hexnovels.me';
   api = 'https://api.hexnovels.me';
-  version = '1.0.3';
+  version = '1.0.4';
 
   async popularNovels(
     pageNo: number,
@@ -337,19 +343,27 @@ class HexNovels implements Plugin.PluginBase {
           'reader-current-chapter',
         )
       : null;
-    const richAttachments = astroState
+    const astroRichAttachments = astroState
       ? getAstroValueByKey<HexRichAttachments>(
           astroState,
           'current-rich-attachments',
         )
       : null;
+    const chapterId = extractChapterId(chapterPath);
+    const apiRichAttachments = chapterId
+      ? await fetchChapterRichAttachments(this.api, chapterId)
+      : null;
+    const richAttachments = mergeRichAttachments(
+      astroRichAttachments,
+      apiRichAttachments,
+    );
 
     if (chapterData?.content) {
       if (
         typeof chapterData.content === 'string' &&
         chapterData.content.trim().length > 0
       ) {
-        return chapterData.content;
+        return normalizeChapterImageUrls(chapterData.content, richAttachments);
       }
 
       if (typeof chapterData.content === 'object') {
@@ -361,7 +375,7 @@ class HexNovels implements Plugin.PluginBase {
           },
         );
         if (renderedChapter.trim().length > 0) {
-          return renderedChapter;
+          return normalizeChapterImageUrls(renderedChapter, richAttachments);
         }
       }
     }
@@ -375,7 +389,10 @@ class HexNovels implements Plugin.PluginBase {
           content?: string;
         };
         if (legacyChapter.content?.trim()) {
-          return legacyChapter.content;
+          return normalizeChapterImageUrls(
+            legacyChapter.content,
+            richAttachments,
+          );
         }
       } catch {
         // Keep fallback selectors below.
@@ -394,7 +411,7 @@ class HexNovels implements Plugin.PluginBase {
     for (const selector of contentSelectors) {
       const content = loadedCheerio(selector).first().html();
       if (content && content.length > 100) {
-        return content;
+        return normalizeChapterImageUrls(content, richAttachments);
       }
     }
 
@@ -773,6 +790,120 @@ function setNumericFilter(
   }
 
   query.set(key, normalized);
+}
+
+function extractChapterId(chapterPath: string): string | null {
+  const cleanPath = chapterPath.split('?')[0].replace(/\/+$/, '');
+  const parts = cleanPath.split('/').filter(Boolean);
+  const lastSegment = parts[parts.length - 1];
+  if (!lastSegment || !looksLikeUuid(lastSegment)) {
+    return null;
+  }
+  return lastSegment;
+}
+
+function looksLikeUuid(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    value,
+  );
+}
+
+async function fetchChapterRichAttachments(
+  apiBase: string,
+  chapterId: string,
+): Promise<HexRichAttachments | null> {
+  const url = `${apiBase}/v2/rich-attachments?chapterId=${encodeURIComponent(chapterId)}`;
+  try {
+    const result = await fetchApi(url);
+    if (!result.ok) {
+      return null;
+    }
+
+    const payload = (await result.json()) as HexRichAttachmentApiItem[];
+    if (!Array.isArray(payload) || !payload.length) {
+      return null;
+    }
+
+    const mappedAttachments: HexRichAttachments = {};
+    payload.forEach(attachment => {
+      const id = attachment.id?.trim();
+      const image = attachment.image?.trim();
+      if (!id || !image) {
+        return;
+      }
+      mappedAttachments[id] = {
+        id,
+        image,
+      };
+    });
+
+    return Object.keys(mappedAttachments).length > 0 ? mappedAttachments : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeRichAttachments(
+  primary: HexRichAttachments | null,
+  secondary: HexRichAttachments | null,
+): HexRichAttachments | null {
+  if (!primary && !secondary) {
+    return null;
+  }
+
+  return {
+    ...(secondary || {}),
+    ...(primary || {}),
+  };
+}
+
+function collectAttachmentImageUrls(
+  richAttachments: HexRichAttachments | null,
+): string[] {
+  if (!richAttachments) {
+    return [];
+  }
+
+  return Object.values(richAttachments)
+    .map(value => extractRichAttachmentImage(value))
+    .filter((url): url is string => Boolean(url));
+}
+
+function normalizeChapterImageUrls(
+  html: string,
+  richAttachments: HexRichAttachments | null,
+): string {
+  if (!html || !/blob:/i.test(html)) {
+    return html;
+  }
+
+  const attachmentUrls = collectAttachmentImageUrls(richAttachments);
+  if (!attachmentUrls.length) {
+    return html;
+  }
+
+  const wrappedHtml = `<div id="hexnovels-content-root">${html}</div>`;
+  const loadedHtml = parseHTML(wrappedHtml);
+  let attachmentIndex = 0;
+
+  loadedHtml('#hexnovels-content-root img').each((_index, element) => {
+    const currentSrc = loadedHtml(element).attr('src')?.trim().toLowerCase();
+    if (!currentSrc?.startsWith('blob:')) {
+      return;
+    }
+
+    const replacement =
+      attachmentUrls[attachmentIndex] ||
+      attachmentUrls[attachmentUrls.length - 1];
+    if (!replacement) {
+      return;
+    }
+
+    attachmentIndex += 1;
+    loadedHtml(element).attr('src', replacement);
+  });
+
+  return loadedHtml('#hexnovels-content-root').html() || html;
 }
 
 function resolveChapterImageUrls(
