@@ -3,7 +3,10 @@ import { defaultCover } from '@libs/defaultCover';
 import { FilterTypes, Filters } from '@libs/filterInputs';
 import { fetchApi } from '@libs/fetch';
 import { NovelStatus } from '@libs/novelStatus';
-import { proseMirrorToHtml } from '@libs/proseMirrorToHtml';
+import {
+  proseMirrorToHtml,
+  type ProseMirrorNode,
+} from '@libs/proseMirrorToHtml';
 import { load as parseHTML, type CheerioAPI } from 'cheerio';
 import dayjs from 'dayjs';
 
@@ -51,6 +54,15 @@ type HexChapterData = {
 type HexReaderChapter = {
   content?: ProseMirrorInput | string;
 };
+
+type HexRichAttachment = {
+  image?: string;
+};
+
+type HexRichAttachments = Record<
+  string,
+  HexRichAttachment | string | undefined
+>;
 
 type HexCatalogBook = {
   slug?: string;
@@ -167,7 +179,7 @@ class HexNovels implements Plugin.PluginBase {
   icon = 'src/ru/hexnovels/icon.png';
   site = 'https://hexnovels.me';
   api = 'https://api.hexnovels.me';
-  version = '1.0.2';
+  version = '1.0.3';
 
   async popularNovels(
     pageNo: number,
@@ -325,6 +337,12 @@ class HexNovels implements Plugin.PluginBase {
           'reader-current-chapter',
         )
       : null;
+    const richAttachments = astroState
+      ? getAstroValueByKey<HexRichAttachments>(
+          astroState,
+          'current-rich-attachments',
+        )
+      : null;
 
     if (chapterData?.content) {
       if (
@@ -337,6 +355,10 @@ class HexNovels implements Plugin.PluginBase {
       if (typeof chapterData.content === 'object') {
         const renderedChapter = proseMirrorToHtml(
           chapterData.content as ProseMirrorInput,
+          {
+            resolveImageUrls: node =>
+              resolveChapterImageUrls(node, richAttachments),
+          },
         );
         if (renderedChapter.trim().length > 0) {
           return renderedChapter;
@@ -751,6 +773,73 @@ function setNumericFilter(
   }
 
   query.set(key, normalized);
+}
+
+function resolveChapterImageUrls(
+  node: ProseMirrorNode,
+  richAttachments: HexRichAttachments | null,
+): string[] | string | undefined {
+  if (!richAttachments || !node.attrs) {
+    return undefined;
+  }
+
+  const imageIds = extractImageIds(node.attrs);
+  if (!imageIds.length) {
+    return undefined;
+  }
+
+  const imageUrls = imageIds
+    .map(id => extractRichAttachmentImage(richAttachments[id]))
+    .filter((url): url is string => Boolean(url));
+
+  if (!imageUrls.length) {
+    return undefined;
+  }
+
+  return imageUrls;
+}
+
+function extractImageIds(attrs: Record<string, unknown>): string[] {
+  const ids: string[] = [];
+  const pushId = (value: unknown): void => {
+    if (typeof value !== 'string') {
+      return;
+    }
+    const normalized = value.trim();
+    if (normalized.length > 0) {
+      ids.push(normalized);
+    }
+  };
+
+  pushId(attrs.image);
+  pushId(attrs.id);
+
+  if (Array.isArray(attrs.images)) {
+    attrs.images.forEach(pushId);
+  }
+
+  return Array.from(new Set(ids));
+}
+
+function extractRichAttachmentImage(
+  richAttachment: HexRichAttachment | string | undefined,
+): string | undefined {
+  if (typeof richAttachment === 'string') {
+    const normalized = richAttachment.trim();
+    return normalized.length > 0 ? normalized : undefined;
+  }
+
+  if (!richAttachment || typeof richAttachment !== 'object') {
+    return undefined;
+  }
+
+  const image = richAttachment.image;
+  if (typeof image !== 'string') {
+    return undefined;
+  }
+
+  const normalized = image.trim();
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function extractAstroState(
