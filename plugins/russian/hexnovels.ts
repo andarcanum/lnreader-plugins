@@ -194,7 +194,7 @@ class HexNovels implements Plugin.PluginBase {
   icon = 'src/ru/hexnovels/icon.png';
   site = 'https://hexnovels.me';
   api = 'https://api.hexnovels.me';
-  version = '1.0.7';
+  version = '1.0.8';
 
   async popularNovels(
     pageNo: number,
@@ -365,30 +365,36 @@ class HexNovels implements Plugin.PluginBase {
         )
       : null;
     const chapterId = extractChapterId(chapterPath);
-    const apiRichAttachments = chapterId
-      ? await fetchChapterRichAttachments(this.api, chapterId)
-      : null;
-    const richAttachments = mergeRichAttachments(
-      astroRichAttachments,
-      apiRichAttachments,
-    );
-    const hydratedRichAttachments = await hydrateRichAttachmentsImages(
-      richAttachments,
-      secretKey,
-    );
 
     if (chapterData?.content) {
       if (
         typeof chapterData.content === 'string' &&
         chapterData.content.trim().length > 0
       ) {
-        return normalizeChapterImageUrls(
+        return normalizeChapterBlobImages(
           chapterData.content,
-          hydratedRichAttachments,
+          this.api,
+          chapterId,
+          astroRichAttachments,
+          secretKey,
         );
       }
 
       if (typeof chapterData.content === 'object') {
+        const requiredImageIds = collectProseMirrorImageIds(
+          chapterData.content as ProseMirrorInput,
+        );
+        const richAttachments = await ensureAttachmentsForRequiredImageIds(
+          this.api,
+          chapterId,
+          astroRichAttachments,
+          requiredImageIds,
+        );
+        const hydratedRichAttachments = await hydrateRichAttachmentsImages(
+          richAttachments,
+          secretKey,
+          requiredImageIds,
+        );
         const renderedChapter = proseMirrorToHtml(
           chapterData.content as ProseMirrorInput,
           {
@@ -397,8 +403,12 @@ class HexNovels implements Plugin.PluginBase {
           },
         );
         if (renderedChapter.trim().length > 0) {
-          return normalizeChapterImageUrls(
+          return normalizeChapterBlobImages(
             renderedChapter,
+            this.api,
+            chapterId,
+            astroRichAttachments,
+            secretKey,
             hydratedRichAttachments,
           );
         }
@@ -414,9 +424,12 @@ class HexNovels implements Plugin.PluginBase {
           content?: string;
         };
         if (legacyChapter.content?.trim()) {
-          return normalizeChapterImageUrls(
+          return normalizeChapterBlobImages(
             legacyChapter.content,
-            hydratedRichAttachments,
+            this.api,
+            chapterId,
+            astroRichAttachments,
+            secretKey,
           );
         }
       } catch {
@@ -436,7 +449,13 @@ class HexNovels implements Plugin.PluginBase {
     for (const selector of contentSelectors) {
       const content = loadedCheerio(selector).first().html();
       if (content && content.length > 100) {
-        return normalizeChapterImageUrls(content, hydratedRichAttachments);
+        return normalizeChapterBlobImages(
+          content,
+          this.api,
+          chapterId,
+          astroRichAttachments,
+          secretKey,
+        );
       }
     }
 
@@ -946,6 +965,143 @@ function looksLikeUuid(value: string): boolean {
   );
 }
 
+function collectProseMirrorImageIds(content: ProseMirrorInput): string[] {
+  const imageIds = new Set<string>();
+  collectImageIdsFromUnknown(content, imageIds);
+  return Array.from(imageIds);
+}
+
+function collectImageIdsFromUnknown(
+  value: unknown,
+  imageIds: Set<string>,
+): void {
+  if (Array.isArray(value)) {
+    value.forEach(entry => collectImageIdsFromUnknown(entry, imageIds));
+    return;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return;
+  }
+
+  const recordValue = value as Record<string, unknown>;
+  const attrs = recordValue.attrs;
+  if (attrs && typeof attrs === 'object' && !Array.isArray(attrs)) {
+    extractImageIds(attrs as Record<string, unknown>).forEach(id =>
+      imageIds.add(id),
+    );
+  }
+
+  collectImageIdsFromUnknown(recordValue.content, imageIds);
+}
+
+async function normalizeChapterBlobImages(
+  html: string,
+  apiBase: string,
+  chapterId: string | null,
+  astroRichAttachments: HexRichAttachments | null,
+  secretKey: string | null,
+  initialRichAttachments?: HexRichAttachments | null,
+): Promise<string> {
+  if (!html || !/blob:/i.test(html)) {
+    return html;
+  }
+
+  const blobImageCount = countBlobImageTags(html);
+  const attachmentsWithImages = await ensureAttachmentsForBlobImages(
+    apiBase,
+    chapterId,
+    initialRichAttachments || astroRichAttachments,
+  );
+  if (!attachmentsWithImages) {
+    return html;
+  }
+
+  const idsToHydrate = collectAttachmentIdsWithImages(
+    attachmentsWithImages,
+    blobImageCount,
+  );
+  const hydratedAttachments = await hydrateRichAttachmentsImages(
+    attachmentsWithImages,
+    secretKey,
+    idsToHydrate,
+  );
+
+  return normalizeChapterImageUrls(html, hydratedAttachments, blobImageCount);
+}
+
+function countBlobImageTags(html: string): number {
+  const matches = html.match(/<img\b[^>]*\bsrc=["']blob:/gi);
+  return matches?.length || 0;
+}
+
+async function ensureAttachmentsForRequiredImageIds(
+  apiBase: string,
+  chapterId: string | null,
+  astroRichAttachments: HexRichAttachments | null,
+  requiredImageIds: string[],
+): Promise<HexRichAttachments | null> {
+  if (!requiredImageIds.length) {
+    return astroRichAttachments;
+  }
+
+  const missingImageIds = requiredImageIds.filter(
+    imageId => !extractRichAttachmentImage(astroRichAttachments?.[imageId]),
+  );
+  if (!missingImageIds.length) {
+    return astroRichAttachments;
+  }
+
+  if (!chapterId) {
+    return astroRichAttachments;
+  }
+
+  const apiRichAttachments = await fetchChapterRichAttachments(
+    apiBase,
+    chapterId,
+  );
+  return mergeRichAttachments(astroRichAttachments, apiRichAttachments);
+}
+
+async function ensureAttachmentsForBlobImages(
+  apiBase: string,
+  chapterId: string | null,
+  astroRichAttachments: HexRichAttachments | null,
+): Promise<HexRichAttachments | null> {
+  if (collectAttachmentImageUrls(astroRichAttachments).length > 0) {
+    return astroRichAttachments;
+  }
+
+  if (!chapterId) {
+    return astroRichAttachments;
+  }
+
+  const apiRichAttachments = await fetchChapterRichAttachments(
+    apiBase,
+    chapterId,
+  );
+  return mergeRichAttachments(astroRichAttachments, apiRichAttachments);
+}
+
+function collectAttachmentIdsWithImages(
+  richAttachments: HexRichAttachments | null,
+  limit?: number,
+): string[] {
+  if (!richAttachments) {
+    return [];
+  }
+
+  const ids = Object.entries(richAttachments)
+    .filter(([, value]) => Boolean(extractRichAttachmentImage(value)))
+    .map(([id]) => id);
+
+  if (typeof limit === 'number' && limit > 0) {
+    return ids.slice(0, limit);
+  }
+
+  return ids;
+}
+
 async function fetchChapterRichAttachments(
   apiBase: string,
   chapterId: string,
@@ -998,33 +1154,40 @@ function mergeRichAttachments(
 async function hydrateRichAttachmentsImages(
   richAttachments: HexRichAttachments | null,
   secretKey: string | null,
+  preferredAttachmentIds?: string[],
 ): Promise<HexRichAttachments | null> {
   if (!richAttachments) {
     return null;
   }
 
-  const entries = Object.entries(richAttachments);
-  if (!entries.length) {
+  const attachmentIdsToHydrate =
+    preferredAttachmentIds?.length && preferredAttachmentIds.length > 0
+      ? preferredAttachmentIds
+      : collectAttachmentIdsWithImages(richAttachments);
+  if (!attachmentIdsToHydrate.length) {
     return richAttachments;
   }
 
-  const hydratedEntries = await Promise.all(
-    entries.map(async ([id, value]) => {
+  const hydratedAttachments: HexRichAttachments = { ...richAttachments };
+  await Promise.all(
+    attachmentIdsToHydrate.map(async id => {
+      const value = hydratedAttachments[id];
       if (typeof value === 'string') {
         const normalized = value.trim();
         if (!normalized) {
-          return [id, value] as const;
+          return;
         }
 
         const decodedUrl = await decodeHexNovelImageToDataUrl(
           normalized,
           secretKey,
         );
-        return [id, decodedUrl || normalized] as const;
+        hydratedAttachments[id] = decodedUrl || normalized;
+        return;
       }
 
       if (!value || typeof value !== 'object') {
-        return [id, value] as const;
+        return;
       }
 
       const imageUrl =
@@ -1032,27 +1195,26 @@ async function hydrateRichAttachmentsImages(
         (typeof value.url === 'string' ? value.url : '');
       const normalizedImageUrl = imageUrl.trim();
       if (!normalizedImageUrl) {
-        return [id, value] as const;
+        return;
       }
 
       const decodedUrl = await decodeHexNovelImageToDataUrl(
         normalizedImageUrl,
         secretKey,
       );
-      return [
-        id,
-        {
-          ...value,
-          image: decodedUrl || normalizedImageUrl,
-        } as HexRichAttachment,
-      ] as const;
+      hydratedAttachments[id] = {
+        ...value,
+        image: decodedUrl || normalizedImageUrl,
+      } as HexRichAttachment;
     }),
   );
 
-  return Object.fromEntries(hydratedEntries) as HexRichAttachments;
+  return hydratedAttachments;
 }
 
 type HexImageEncryptionMode = 'xor' | 'sec';
+const decodedImageCache = new Map<string, string>();
+const decodedImageCacheLimit = 120;
 
 function detectHexImageEncryptionMode(
   imageUrl: string,
@@ -1106,6 +1268,11 @@ async function decodeHexNovelImageToDataUrl(
   if (!normalizedSecretKey) {
     return null;
   }
+  const cacheKey = `${normalizedSecretKey}::${imageUrl}`;
+  const cachedImage = readDecodedImageFromCache(cacheKey);
+  if (cachedImage) {
+    return cachedImage;
+  }
 
   const fetchUrl = mode === 'sec' ? toXorImageUrl(imageUrl) : imageUrl;
 
@@ -1119,10 +1286,43 @@ async function decodeHexNovelImageToDataUrl(
     const decodedBytes = xorDecodeBytes(rawBytes, normalizedSecretKey);
     const mimeType = detectMimeType(decodedBytes, imageUrl);
     const base64Payload = bytesToBase64(decodedBytes);
-
-    return `data:${mimeType};base64,${base64Payload}`;
+    const decodedDataUrl = `data:${mimeType};base64,${base64Payload}`;
+    writeDecodedImageToCache(cacheKey, decodedDataUrl);
+    return decodedDataUrl;
   } catch {
     return null;
+  }
+}
+
+function readDecodedImageFromCache(cacheKey: string): string | null {
+  const cached = decodedImageCache.get(cacheKey);
+  if (!cached) {
+    return null;
+  }
+
+  // Refresh entry order for LRU-like eviction behavior.
+  decodedImageCache.delete(cacheKey);
+  decodedImageCache.set(cacheKey, cached);
+  return cached;
+}
+
+function writeDecodedImageToCache(
+  cacheKey: string,
+  decodedDataUrl: string,
+): void {
+  if (decodedImageCache.has(cacheKey)) {
+    decodedImageCache.delete(cacheKey);
+  }
+  decodedImageCache.set(cacheKey, decodedDataUrl);
+
+  while (decodedImageCache.size > decodedImageCacheLimit) {
+    const oldestCacheKey = decodedImageCache.keys().next().value as
+      | string
+      | undefined;
+    if (!oldestCacheKey) {
+      return;
+    }
+    decodedImageCache.delete(oldestCacheKey);
   }
 }
 
@@ -1219,25 +1419,36 @@ function bytesToBase64(bytes: Uint8Array): string {
 
 function collectAttachmentImageUrls(
   richAttachments: HexRichAttachments | null,
+  limit?: number,
 ): string[] {
   if (!richAttachments) {
     return [];
   }
 
-  return Object.values(richAttachments)
+  const attachmentUrls = Object.values(richAttachments)
     .map(value => extractRichAttachmentImage(value))
     .filter((url): url is string => Boolean(url));
+
+  if (typeof limit === 'number' && limit > 0) {
+    return attachmentUrls.slice(0, limit);
+  }
+
+  return attachmentUrls;
 }
 
 function normalizeChapterImageUrls(
   html: string,
   richAttachments: HexRichAttachments | null,
+  blobImageCount?: number,
 ): string {
   if (!html || !/blob:/i.test(html)) {
     return html;
   }
 
-  const attachmentUrls = collectAttachmentImageUrls(richAttachments);
+  const attachmentUrls = collectAttachmentImageUrls(
+    richAttachments,
+    blobImageCount,
+  );
   if (!attachmentUrls.length) {
     return html;
   }
