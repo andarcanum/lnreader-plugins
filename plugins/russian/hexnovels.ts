@@ -194,7 +194,7 @@ class HexNovels implements Plugin.PluginBase {
   icon = 'src/ru/hexnovels/icon.png';
   site = 'https://hexnovels.me';
   api = 'https://api.hexnovels.me';
-  version = '1.0.11';
+  version = '1.0.12';
 
   async popularNovels(
     pageNo: number,
@@ -457,9 +457,7 @@ class HexNovels implements Plugin.PluginBase {
     return '';
   }
 
-  async fetchImage(
-    imageRef: string,
-  ): Promise<{ dataUrl: string; cacheKey?: string } | null> {
+  async fetchImage(imageRef: string): Promise<string | null> {
     const parsedRef = parseHexNovelImageRef(imageRef);
     if (!parsedRef) {
       return null;
@@ -473,10 +471,7 @@ class HexNovels implements Plugin.PluginBase {
       return null;
     }
 
-    return {
-      dataUrl: decodedPayload.dataUrl,
-      cacheKey: parsedRef.cacheKey || parsedRef.imageUrl,
-    };
+    return decodedPayload.dataUrl;
   }
 
   async searchNovels(
