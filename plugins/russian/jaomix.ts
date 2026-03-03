@@ -9,7 +9,7 @@ class Jaomix implements Plugin.PluginBase {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.6';
+  version = '1.0.7';
   icon = 'src/ru/jaomix/icon.png';
 
   async popularNovels(
@@ -77,8 +77,9 @@ class Jaomix implements Plugin.PluginBase {
     const novelResponse = await fetchApi(novelUrl);
     const body = await novelResponse.text();
     const loadedCheerio = parseHTML(body);
-    const resolvedNovelPath = this.toPath(novelResponse.url || novelUrl);
-    const normalizedNovelPath = this.normalizePath(resolvedNovelPath);
+    const resolvedNovelPath = this.normalizePath(
+      this.toPath(novelResponse.url || novelUrl),
+    );
 
     const novel: Plugin.SourceNovel = {
       path: novelPath,
@@ -102,7 +103,7 @@ class Jaomix implements Plugin.PluginBase {
 
     const chapterFragments = await this.getChapterFragments(
       loadedCheerio,
-      novelUrl,
+      novelResponse.url || novelUrl,
       novelResponse,
     );
     const chapterItems: Omit<Plugin.ChapterItem, 'chapterNumber'>[] = [];
@@ -118,7 +119,7 @@ class Jaomix implements Plugin.PluginBase {
         if (!name || !url) return;
 
         const path = this.toPath(url);
-        if (!path.startsWith(normalizedNovelPath)) return;
+        if (!path.startsWith(resolvedNovelPath)) return;
         if (chapterPaths.has(path)) return;
 
         chapterPaths.add(path);
@@ -131,9 +132,7 @@ class Jaomix implements Plugin.PluginBase {
       });
     }
 
-    const orderedChapterItems = chapterItems.reverse();
-
-    novel.chapters = orderedChapterItems.map((chapter, chapterIndex) => ({
+    novel.chapters = chapterItems.reverse().map((chapter, chapterIndex) => ({
       ...chapter,
       chapterNumber: chapterIndex + 1,
     }));
@@ -177,8 +176,9 @@ class Jaomix implements Plugin.PluginBase {
     const cookieHeader = novelResponse.headers
       .get('set-cookie')
       ?.match(/^\s*([^;]+)/)?.[1];
-    const pagesToLoad = [...new Set(chapterPages)].slice(0, 30);
+    const pagesToLoad = [...new Set(chapterPages)].slice(0, 40);
     let sequentialFailures = 0;
+
     for (const page of pagesToLoad) {
       if (baseChapterHtml && page === '1') continue;
 
@@ -190,28 +190,27 @@ class Jaomix implements Plugin.PluginBase {
           Accept: '*/*',
           'X-Requested-With': 'XMLHttpRequest',
           Referer: novelUrl,
+          'x-referer': novelUrl,
         };
-        if (cookieHeader) headers.Cookie = cookieHeader;
+        headers.Cookie = cookieHeader
+          ? cookieHeader + '; i18n_redirected=ru'
+          : 'i18n_redirected=ru';
 
-        const chapterHtml = await this.loadAjaxChapterPage(
-          pageBody,
-          novelUrl,
-          headers,
-        );
+        const chapterHtml = await this.loadAjaxChapterPage(pageBody, headers);
         if (!chapterHtml) {
           sequentialFailures += 1;
           if (sequentialFailures >= 3) break;
           await this.sleep(300);
           continue;
         }
+
         sequentialFailures = 0;
         chapterFragments.push(chapterHtml);
-        await this.sleep(150);
+        await this.sleep(120);
       } catch (_) {
         sequentialFailures += 1;
         if (sequentialFailures >= 3) break;
         await this.sleep(300);
-        continue;
       }
     }
 
@@ -220,38 +219,24 @@ class Jaomix implements Plugin.PluginBase {
 
   async loadAjaxChapterPage(
     pageBody: string,
-    novelUrl: string,
     headers: Record<string, string>,
   ): Promise<string> {
-    const ajaxUrl = this.site + '/wp-admin/admin-ajax.php';
-    const hasChapterMarkup = (html: string) =>
-      html.includes('class="title"') || html.includes("class='title'");
+    const chapterPageResponse = await fetchApi(
+      this.site + '/wp-admin/admin-ajax.php',
+      {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+        body: pageBody,
+      },
+    );
+    if (!chapterPageResponse.ok) return '';
 
-    const chapterPageResponse = await fetchApi(ajaxUrl, {
-      method: 'POST',
-      headers,
-      credentials: 'include',
-      body: pageBody,
-    });
-    if (chapterPageResponse.ok) {
-      const chapterHtml = await chapterPageResponse.text();
-      if (hasChapterMarkup(chapterHtml)) return chapterHtml;
-    }
-
-    const fallbackHeaders: Record<string, string> = { ...headers };
-    delete fallbackHeaders.Referer;
-    const fallbackResponse = await fetchApi(ajaxUrl, {
-      method: 'POST',
-      headers: fallbackHeaders,
-      credentials: 'include',
-      referrer: novelUrl,
-      referrerPolicy: 'unsafe-url',
-      body: pageBody,
-    });
-    if (!fallbackResponse.ok) return '';
-
-    const fallbackHtml = await fallbackResponse.text();
-    return hasChapterMarkup(fallbackHtml) ? fallbackHtml : '';
+    const chapterHtml = await chapterPageResponse.text();
+    const hasChapterMarkup =
+      chapterHtml.includes('class="title"') ||
+      chapterHtml.includes("class='title'");
+    return hasChapterMarkup ? chapterHtml : '';
   }
 
   async parseChapter(chapterPath: string): Promise<string> {
@@ -261,13 +246,13 @@ class Jaomix implements Plugin.PluginBase {
     const loadedCheerio = parseHTML(body);
 
     loadedCheerio('div.adblock-service, div[class="adblock-service"]').remove();
-
     const contentSelectors = [
       'div.entry-content',
       'article .entry-content',
       'div[class*="entry-content"]',
       'article',
     ];
+
     let chapterText = '';
     let hasCaptchaGate = false;
     for (const selector of contentSelectors) {
@@ -377,29 +362,55 @@ class Jaomix implements Plugin.PluginBase {
   }
 
   parseDate = (dateString: string | undefined = '') => {
-    const months: Record<string, number> = {
-      Янв: 1,
-      Фев: 2,
-      Мар: 3,
-      Апр: 4,
-      Май: 5,
-      Июн: 6,
-      Июл: 7,
-      Авг: 8,
-      Сен: 9,
-      Окт: 10,
-      Ноя: 11,
-      Дек: 12,
+    const monthIndexByName: Record<string, number> = {
+      ['\u044f\u043d\u0432']: 1,
+      ['\u044f\u043d\u0432\u0430\u0440\u044f']: 1,
+      ['\u0444\u0435\u0432']: 2,
+      ['\u0444\u0435\u0432\u0440\u0430\u043b\u044f']: 2,
+      ['\u043c\u0430\u0440']: 3,
+      ['\u043c\u0430\u0440\u0442\u0430']: 3,
+      ['\u0430\u043f\u0440']: 4,
+      ['\u0430\u043f\u0440\u0435\u043b\u044f']: 4,
+      ['\u043c\u0430\u0439']: 5,
+      ['\u043c\u0430\u044f']: 5,
+      ['\u0438\u044e\u043d']: 6,
+      ['\u0438\u044e\u043d\u044f']: 6,
+      ['\u0438\u044e\u043b']: 7,
+      ['\u0438\u044e\u043b\u044f']: 7,
+      ['\u0430\u0432\u0433']: 8,
+      ['\u0430\u0432\u0433\u0443\u0441\u0442\u0430']: 8,
+      ['\u0441\u0435\u043d']: 9,
+      ['\u0441\u0435\u043d\u0442\u044f\u0431\u0440\u044f']: 9,
+      ['\u043e\u043a\u0442']: 10,
+      ['\u043e\u043a\u0442\u044f\u0431\u0440\u044f']: 10,
+      ['\u043d\u043e\u044f']: 11,
+      ['\u043d\u043e\u044f\u0431\u0440\u044f']: 11,
+      ['\u0434\u0435\u043a']: 12,
+      ['\u0434\u0435\u043a\u0430\u0431\u0440\u044f']: 12,
     };
 
-    const [time, day, month, year] = dateString.split(' ');
-    if (time && day && months[month] && year) {
-      return dayjs(year + '-' + months[month] + '-' + day + ' ' + time).format(
-        'LLL',
-      );
-    }
+    const match = dateString
+      .trim()
+      .match(/^(\d{1,2}:\d{2})\s+(\d{1,2})\s+([^\s]+)\s+(\d{4})$/);
+    if (!match) return null;
 
-    return dateString || null;
+    const [, time, day, rawMonth, year] = match;
+    const monthName = rawMonth.replace('.', '').toLowerCase();
+    const monthIndex = monthIndexByName[monthName];
+    if (!monthIndex) return null;
+
+    const [hour, minute] = time.split(':').map(value => parseInt(value, 10));
+    const parsedDate = dayjs(
+      new Date(
+        parseInt(year, 10),
+        monthIndex - 1,
+        parseInt(day, 10),
+        hour,
+        minute,
+      ),
+    );
+
+    return parsedDate.isValid() ? parsedDate.format('YYYY-MM-DD HH:mm') : null;
   };
 
   filters = {
