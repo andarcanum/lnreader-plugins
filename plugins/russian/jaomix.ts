@@ -9,8 +9,15 @@ class Jaomix implements Plugin.PluginBase {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.7';
+  version = '1.0.8';
   icon = 'src/ru/jaomix/icon.png';
+  chapterListCache = new Map<
+    string,
+    {
+      expiresAt: number;
+      chapters: Omit<Plugin.ChapterItem, 'chapterNumber'>[];
+    }
+  >();
 
   async popularNovels(
     pageNo: number,
@@ -101,35 +108,53 @@ class Jaomix implements Plugin.PluginBase {
       }
     });
 
-    const chapterFragments = await this.getChapterFragments(
-      loadedCheerio,
-      novelResponse.url || novelUrl,
-      novelResponse,
-    );
-    const chapterItems: Omit<Plugin.ChapterItem, 'chapterNumber'>[] = [];
-    const chapterPaths = new Set<string>();
+    const cachedChapters = this.chapterListCache.get(resolvedNovelPath);
+    let chapterItems: Omit<Plugin.ChapterItem, 'chapterNumber'>[] =
+      cachedChapters?.expiresAt && cachedChapters.expiresAt > Date.now()
+        ? cachedChapters.chapters
+        : [];
 
-    for (const fragment of chapterFragments) {
-      const loadedFragment = parseHTML(fragment);
-      loadedFragment('div.title').each((_, element) => {
-        const name =
-          loadedFragment(element).find('a').attr('title') ||
-          loadedFragment(element).find('h2').text().trim();
-        const url = loadedFragment(element).find('a').attr('href');
-        if (!name || !url) return;
+    if (!chapterItems.length) {
+      const chapterFragments = await this.getChapterFragments(
+        loadedCheerio,
+        novelResponse.url || novelUrl,
+        novelResponse,
+      );
+      const chapterPaths = new Set<string>();
 
-        const path = this.toPath(url);
-        if (!path.startsWith(resolvedNovelPath)) return;
-        if (chapterPaths.has(path)) return;
+      chapterItems = [];
+      for (const fragment of chapterFragments) {
+        const loadedFragment = parseHTML(fragment);
+        loadedFragment('div.title').each((_, element) => {
+          const name =
+            loadedFragment(element).find('a').attr('title') ||
+            loadedFragment(element).find('h2').text().trim();
+          const url = loadedFragment(element).find('a').attr('href');
+          if (!name || !url) return;
 
-        chapterPaths.add(path);
-        const releaseDate = loadedFragment(element).find('time').text().trim();
-        chapterItems.push({
-          name: name.trim(),
-          path,
-          releaseTime: this.parseDate(releaseDate),
+          const path = this.toPath(url);
+          if (!path.startsWith(resolvedNovelPath)) return;
+          if (chapterPaths.has(path)) return;
+
+          chapterPaths.add(path);
+          const releaseDate = loadedFragment(element)
+            .find('time')
+            .text()
+            .trim();
+          chapterItems.push({
+            name: name.trim(),
+            path,
+            releaseTime: this.parseDate(releaseDate),
+          });
         });
-      });
+      }
+
+      if (chapterItems.length > 50) {
+        this.chapterListCache.set(resolvedNovelPath, {
+          chapters: chapterItems,
+          expiresAt: Date.now() + 5 * 60 * 1000,
+        });
+      }
     }
 
     novel.chapters = chapterItems.reverse().map((chapter, chapterIndex) => ({
@@ -176,7 +201,7 @@ class Jaomix implements Plugin.PluginBase {
     const cookieHeader = novelResponse.headers
       .get('set-cookie')
       ?.match(/^\s*([^;]+)/)?.[1];
-    const pagesToLoad = [...new Set(chapterPages)].slice(0, 40);
+    const pagesToLoad = [...new Set(chapterPages)].slice(0, 20);
     let sequentialFailures = 0;
 
     for (const page of pagesToLoad) {
@@ -185,32 +210,43 @@ class Jaomix implements Plugin.PluginBase {
       try {
         const pageBody =
           'action=loadpagenavchapstt&page=' + encodeURIComponent(page);
-        const headers: Record<string, string> = {
+        const minimalHeaders: Record<string, string> = {
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          Accept: '*/*',
-          'X-Requested-With': 'XMLHttpRequest',
           Referer: novelUrl,
-          'x-referer': novelUrl,
+          Accept: '*/*',
         };
-        headers.Cookie = cookieHeader
-          ? cookieHeader + '; i18n_redirected=ru'
-          : 'i18n_redirected=ru';
+        let chapterHtml = await this.loadAjaxChapterPage(
+          pageBody,
+          minimalHeaders,
+        );
 
-        const chapterHtml = await this.loadAjaxChapterPage(pageBody, headers);
+        // Fallback for local dev proxy path where referer can be rewritten.
+        if (!chapterHtml) {
+          const proxyHeaders: Record<string, string> = {
+            ...minimalHeaders,
+            'X-Requested-With': 'XMLHttpRequest',
+            'x-referer': novelUrl,
+          };
+          if (cookieHeader) {
+            proxyHeaders.Cookie = cookieHeader + '; i18n_redirected=ru';
+          }
+          chapterHtml = await this.loadAjaxChapterPage(pageBody, proxyHeaders);
+        }
+
         if (!chapterHtml) {
           sequentialFailures += 1;
-          if (sequentialFailures >= 3) break;
-          await this.sleep(300);
+          if (sequentialFailures >= 2) break;
+          await this.sleep(500);
           continue;
         }
 
         sequentialFailures = 0;
         chapterFragments.push(chapterHtml);
-        await this.sleep(120);
+        await this.sleep(260);
       } catch (_) {
         sequentialFailures += 1;
-        if (sequentialFailures >= 3) break;
-        await this.sleep(300);
+        if (sequentialFailures >= 2) break;
+        await this.sleep(500);
       }
     }
 
