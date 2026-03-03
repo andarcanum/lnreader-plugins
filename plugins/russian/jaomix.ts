@@ -9,7 +9,7 @@ class Jaomix implements Plugin.PluginBase {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.4';
+  version = '1.0.5';
   icon = 'src/ru/jaomix/icon.png';
 
   async popularNovels(
@@ -77,6 +77,8 @@ class Jaomix implements Plugin.PluginBase {
     const novelResponse = await fetchApi(novelUrl);
     const body = await novelResponse.text();
     const loadedCheerio = parseHTML(body);
+    const normalizedNovelPath = this.normalizePath(novelPath);
+    const chapterPagesCount = loadedCheerio('select.sel-toc option').length;
 
     const novel: Plugin.SourceNovel = {
       path: novelPath,
@@ -115,7 +117,8 @@ class Jaomix implements Plugin.PluginBase {
         const url = loadedFragment(element).find('a').attr('href');
         if (!name || !url) return;
 
-        const path = url.replace(this.site, '');
+        const path = this.toPath(url);
+        if (!path.startsWith(normalizedNovelPath)) return;
         if (chapterPaths.has(path)) return;
 
         chapterPaths.add(path);
@@ -128,11 +131,89 @@ class Jaomix implements Plugin.PluginBase {
       });
     }
 
-    novel.chapters = chapterItems.reverse().map((chapter, chapterIndex) => ({
+    let orderedChapterItems = chapterItems.reverse();
+    if (chapterPagesCount > 1 && orderedChapterItems.length <= 50) {
+      const chaptersFromNavigation = await this.collectChaptersByNavigation(
+        loadedCheerio,
+        normalizedNovelPath,
+      );
+      if (chaptersFromNavigation.length > orderedChapterItems.length) {
+        orderedChapterItems = chaptersFromNavigation;
+      }
+    }
+
+    novel.chapters = orderedChapterItems.map((chapter, chapterIndex) => ({
       ...chapter,
       chapterNumber: chapterIndex + 1,
     }));
     return novel;
+  }
+
+  normalizePath(path: string): string {
+    return path.endsWith('/') ? path : path + '/';
+  }
+
+  toPath(url: string): string {
+    try {
+      return new URL(url, this.site).pathname;
+    } catch (_) {
+      return url.replace(this.site, '');
+    }
+  }
+
+  async collectChaptersByNavigation(
+    loadedCheerio: ReturnType<typeof parseHTML>,
+    novelPath: string,
+  ): Promise<Omit<Plugin.ChapterItem, 'chapterNumber'>[]> {
+    const firstChapterUrl =
+      loadedCheerio('.link-last-first-chapter .ins-first a').attr('href') ||
+      loadedCheerio('.ins-first a').attr('href');
+    if (!firstChapterUrl) return [];
+
+    const chapters: Omit<Plugin.ChapterItem, 'chapterNumber'>[] = [];
+    const visitedPaths = new Set<string>();
+    let currentChapterUrl = firstChapterUrl;
+
+    for (let safetyCounter = 0; safetyCounter < 1500; safetyCounter++) {
+      try {
+        const chapterResponse = await fetchApi(currentChapterUrl);
+        if (!chapterResponse.ok) break;
+
+        const chapterBody = await chapterResponse.text();
+        const chapterCheerio = parseHTML(chapterBody);
+        const canonicalUrl =
+          chapterCheerio('link[rel="canonical"]').attr('href') ||
+          chapterCheerio('meta[property="og:url"]').attr('content') ||
+          currentChapterUrl;
+        const chapterPath = this.toPath(canonicalUrl);
+        if (
+          !chapterPath.startsWith(novelPath) ||
+          visitedPaths.has(chapterPath)
+        ) {
+          break;
+        }
+
+        visitedPaths.add(chapterPath);
+        const chapterName = chapterCheerio('h1').first().text().trim();
+        const releaseDate = chapterCheerio('time').first().text().trim();
+        chapters.push({
+          name: chapterName || `Chapter ${chapters.length + 1}`,
+          path: chapterPath,
+          releaseTime: this.parseDate(releaseDate),
+        });
+
+        const nextChapterUrl = chapterCheerio('.next a').attr('href');
+        if (!nextChapterUrl) break;
+
+        const nextPath = this.toPath(nextChapterUrl);
+        if (!nextPath.startsWith(novelPath)) break;
+        currentChapterUrl = new URL(nextChapterUrl, this.site).toString();
+      } catch (_) {
+        break;
+      }
+    }
+
+    return chapters;
   }
 
   async getChapterFragments(
@@ -165,6 +246,7 @@ class Jaomix implements Plugin.PluginBase {
         const headers: Record<string, string> = {
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
           Referer: novelUrl,
+          'x-referer': novelUrl,
         };
         if (cookieHeader) headers.Cookie = cookieHeader;
 
@@ -225,11 +307,86 @@ class Jaomix implements Plugin.PluginBase {
     );
     const loadedCheerio = parseHTML(body);
 
-    loadedCheerio('div[class="adblock-service"]').remove();
-    const chapterText =
-      loadedCheerio('div[class="entry-content"]').html() || '';
+    loadedCheerio('div.adblock-service, div[class="adblock-service"]').remove();
+
+    const contentSelectors = [
+      'div.entry-content',
+      'article .entry-content',
+      'div[class*="entry-content"]',
+      'article',
+    ];
+    let chapterText = '';
+    let hasCaptchaGate = false;
+    for (const selector of contentSelectors) {
+      const contentNode = loadedCheerio(selector).first().clone();
+      if (!contentNode.length) continue;
+      hasCaptchaGate =
+        hasCaptchaGate ||
+        contentNode.find('.but-captcha').length > 0 ||
+        /загрузки полной главы/i.test(contentNode.text());
+      contentNode
+        .find(
+          'script, style, iframe, noscript, .but-captcha, .block-capth, [class^="block-capth"], [class*=" block-capth"]',
+        )
+        .remove();
+      chapterText = contentNode.html() || '';
+      if (chapterText.trim()) break;
+    }
+
+    if (hasCaptchaGate) {
+      const chapterFromMirror = await this.loadChapterFromMirror(chapterPath);
+      if (chapterFromMirror) return chapterFromMirror;
+    }
 
     return chapterText.replace(/<a[^>]*>(.*?)<\/a>/gi, '$1');
+  }
+
+  async loadChapterFromMirror(chapterPath: string): Promise<string> {
+    const chapterUrl = new URL(chapterPath, this.site).toString();
+    const mirrorUrl =
+      'https://r.jina.ai/http://r.jina.ai/' +
+      chapterUrl.replace(/^https?:\/\//, 'http://');
+
+    try {
+      const mirrorResponse = await fetchApi(mirrorUrl);
+      if (!mirrorResponse.ok) return '';
+
+      const mirrorBody = await mirrorResponse.text();
+      const markdownMarker = 'Markdown Content:';
+      const markdownMarkerIndex = mirrorBody.indexOf(markdownMarker);
+      if (markdownMarkerIndex === -1) return '';
+
+      const markdownChapterText = mirrorBody
+        .slice(markdownMarkerIndex + markdownMarker.length)
+        .trim();
+      if (!markdownChapterText) return '';
+
+      return this.markdownTextToHtml(markdownChapterText);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  markdownTextToHtml(markdownText: string): string {
+    return markdownText
+      .replace(/\r/g, '')
+      .split(/\n{2,}/)
+      .map(paragraph => paragraph.trim())
+      .filter(Boolean)
+      .map(
+        paragraph =>
+          '<p>' + this.escapeHtml(paragraph).replace(/\n/g, '<br>') + '</p>',
+      )
+      .join('');
+  }
+
+  escapeHtml(rawText: string): string {
+    return rawText
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }
 
   async searchNovels(
