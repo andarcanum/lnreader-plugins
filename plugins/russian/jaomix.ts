@@ -9,7 +9,7 @@ class Jaomix implements Plugin.PluginBase {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.2';
+  version = '1.0.3';
   icon = 'src/ru/jaomix/icon.png';
 
   async popularNovels(
@@ -73,7 +73,9 @@ class Jaomix implements Plugin.PluginBase {
   }
 
   async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
-    const body = await fetchApi(this.site + novelPath).then(res => res.text());
+    const novelUrl = this.site + novelPath;
+    const novelResponse = await fetchApi(novelUrl);
+    const body = await novelResponse.text();
     const loadedCheerio = parseHTML(body);
 
     const novel: Plugin.SourceNovel = {
@@ -96,25 +98,101 @@ class Jaomix implements Plugin.PluginBase {
       }
     });
 
-    const chapters: Plugin.ChapterItem[] = [];
-    const totalChapters = loadedCheerio('div.title').length;
+    const chapterFragments = await this.getChapterFragments(
+      loadedCheerio,
+      novelUrl,
+      novelResponse,
+    );
+    const chapterItems: Omit<Plugin.ChapterItem, 'chapterNumber'>[] = [];
+    const chapterPaths = new Set<string>();
 
-    loadedCheerio('div.title').each((chapterIndex, element) => {
-      const name = loadedCheerio(element).find('a').attr('title');
-      const url = loadedCheerio(element).find('a').attr('href');
-      if (!name || !url) return;
+    for (const fragment of chapterFragments) {
+      const loadedFragment = parseHTML(fragment);
+      loadedFragment('div.title').each((_, element) => {
+        const name =
+          loadedFragment(element).find('a').attr('title') ||
+          loadedFragment(element).find('h2').text().trim();
+        const url = loadedFragment(element).find('a').attr('href');
+        if (!name || !url) return;
 
-      const releaseDate = loadedCheerio(element).find('time').text();
-      chapters.push({
-        name,
-        path: url.replace(this.site, ''),
-        releaseTime: this.parseDate(releaseDate),
-        chapterNumber: totalChapters - chapterIndex,
+        const path = url.replace(this.site, '');
+        if (chapterPaths.has(path)) return;
+
+        chapterPaths.add(path);
+        const releaseDate = loadedFragment(element).find('time').text().trim();
+        chapterItems.push({
+          name: name.trim(),
+          path,
+          releaseTime: this.parseDate(releaseDate),
+        });
       });
-    });
+    }
 
-    novel.chapters = chapters.reverse();
+    novel.chapters = chapterItems.reverse().map((chapter, chapterIndex) => ({
+      ...chapter,
+      chapterNumber: chapterIndex + 1,
+    }));
     return novel;
+  }
+
+  async getChapterFragments(
+    loadedCheerio: ReturnType<typeof parseHTML>,
+    novelUrl: string,
+    novelResponse: Response,
+  ): Promise<string[]> {
+    const chapterFragments: string[] = [];
+    const baseChapterHtml = loadedCheerio('.block-toc-out').html();
+    if (baseChapterHtml) chapterFragments.push(baseChapterHtml);
+
+    const chapterPages = loadedCheerio('select.sel-toc option')
+      .map((_, element) => loadedCheerio(element).attr('value') || '')
+      .get()
+      .filter(Boolean);
+    if (!chapterPages.length)
+      return chapterFragments.length
+        ? chapterFragments
+        : [loadedCheerio.html()];
+
+    const selectedPage =
+      loadedCheerio('select.sel-toc option:selected').attr('value') || '';
+    const cookieHeader = novelResponse.headers
+      .get('set-cookie')
+      ?.match(/^\s*([^;]+)/)?.[1];
+    if (!cookieHeader)
+      return chapterFragments.length
+        ? chapterFragments
+        : [loadedCheerio.html()];
+
+    for (const page of chapterPages) {
+      if (page === selectedPage && baseChapterHtml) continue;
+
+      try {
+        const pageBody =
+          'action=loadpagenavchapstt&page=' + encodeURIComponent(page);
+        const chapterPageResponse = await fetchApi(
+          this.site + '/wp-admin/admin-ajax.php',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type':
+                'application/x-www-form-urlencoded; charset=UTF-8',
+              Cookie: cookieHeader,
+              Referer: novelUrl,
+            },
+            body: pageBody,
+          },
+        );
+        if (!chapterPageResponse.ok) continue;
+
+        const chapterHtml = await chapterPageResponse.text();
+        if (!chapterHtml || chapterHtml.trim() === 'Ошибка.') continue;
+        chapterFragments.push(chapterHtml);
+      } catch (_) {
+        continue;
+      }
+    }
+
+    return chapterFragments.length ? chapterFragments : [loadedCheerio.html()];
   }
 
   async parseChapter(chapterPath: string): Promise<string> {
