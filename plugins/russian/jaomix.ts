@@ -9,7 +9,7 @@ class Jaomix implements Plugin.PluginBase {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.3';
+  version = '1.0.4';
   icon = 'src/ru/jaomix/icon.png';
 
   async popularNovels(
@@ -168,19 +168,12 @@ class Jaomix implements Plugin.PluginBase {
         };
         if (cookieHeader) headers.Cookie = cookieHeader;
 
-        const chapterPageResponse = await fetchApi(
-          this.site + '/wp-admin/admin-ajax.php',
-          {
-            method: 'POST',
-            headers,
-            credentials: 'include',
-            body: pageBody,
-          },
+        const chapterHtml = await this.loadAjaxChapterPage(
+          pageBody,
+          novelUrl,
+          headers,
         );
-        if (!chapterPageResponse.ok) continue;
-
-        const chapterHtml = await chapterPageResponse.text();
-        if (!chapterHtml || chapterHtml.trim() === 'Ошибка.') continue;
+        if (!chapterHtml) continue;
         chapterFragments.push(chapterHtml);
       } catch (_) {
         continue;
@@ -188,6 +181,42 @@ class Jaomix implements Plugin.PluginBase {
     }
 
     return chapterFragments.length ? chapterFragments : [loadedCheerio.html()];
+  }
+
+  async loadAjaxChapterPage(
+    pageBody: string,
+    novelUrl: string,
+    headers: Record<string, string>,
+  ): Promise<string> {
+    const ajaxUrl = this.site + '/wp-admin/admin-ajax.php';
+    const hasChapterMarkup = (html: string) =>
+      html.includes('class="title"') || html.includes("class='title'");
+
+    const chapterPageResponse = await fetchApi(ajaxUrl, {
+      method: 'POST',
+      headers,
+      credentials: 'include',
+      body: pageBody,
+    });
+    if (chapterPageResponse.ok) {
+      const chapterHtml = await chapterPageResponse.text();
+      if (hasChapterMarkup(chapterHtml)) return chapterHtml;
+    }
+
+    const fallbackHeaders: Record<string, string> = { ...headers };
+    delete fallbackHeaders.Referer;
+    const fallbackResponse = await fetchApi(ajaxUrl, {
+      method: 'POST',
+      headers: fallbackHeaders,
+      credentials: 'include',
+      referrer: novelUrl,
+      referrerPolicy: 'unsafe-url',
+      body: pageBody,
+    });
+    if (!fallbackResponse.ok) return '';
+
+    const fallbackHtml = await fallbackResponse.text();
+    return hasChapterMarkup(fallbackHtml) ? fallbackHtml : '';
   }
 
   async parseChapter(chapterPath: string): Promise<string> {
