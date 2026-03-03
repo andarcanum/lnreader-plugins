@@ -153,32 +153,27 @@ class Jaomix implements Plugin.PluginBase {
         ? chapterFragments
         : [loadedCheerio.html()];
 
-    const selectedPage =
-      loadedCheerio('select.sel-toc option:selected').attr('value') || '';
     const cookieHeader = novelResponse.headers
       .get('set-cookie')
       ?.match(/^\s*([^;]+)/)?.[1];
-    if (!cookieHeader)
-      return chapterFragments.length
-        ? chapterFragments
-        : [loadedCheerio.html()];
-
-    for (const page of chapterPages) {
-      if (page === selectedPage && baseChapterHtml) continue;
+    for (const page of new Set(chapterPages)) {
+      if (baseChapterHtml && page === '1') continue;
 
       try {
         const pageBody =
           'action=loadpagenavchapstt&page=' + encodeURIComponent(page);
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          Referer: novelUrl,
+        };
+        if (cookieHeader) headers.Cookie = cookieHeader;
+
         const chapterPageResponse = await fetchApi(
           this.site + '/wp-admin/admin-ajax.php',
           {
             method: 'POST',
-            headers: {
-              'Content-Type':
-                'application/x-www-form-urlencoded; charset=UTF-8',
-              Cookie: cookieHeader,
-              Referer: novelUrl,
-            },
+            headers,
+            credentials: 'include',
             body: pageBody,
           },
         );
