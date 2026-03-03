@@ -9,7 +9,7 @@ class Jaomix implements Plugin.PluginBase {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.5';
+  version = '1.0.6';
   icon = 'src/ru/jaomix/icon.png';
 
   async popularNovels(
@@ -77,8 +77,8 @@ class Jaomix implements Plugin.PluginBase {
     const novelResponse = await fetchApi(novelUrl);
     const body = await novelResponse.text();
     const loadedCheerio = parseHTML(body);
-    const normalizedNovelPath = this.normalizePath(novelPath);
-    const chapterPagesCount = loadedCheerio('select.sel-toc option').length;
+    const resolvedNovelPath = this.toPath(novelResponse.url || novelUrl);
+    const normalizedNovelPath = this.normalizePath(resolvedNovelPath);
 
     const novel: Plugin.SourceNovel = {
       path: novelPath,
@@ -131,16 +131,7 @@ class Jaomix implements Plugin.PluginBase {
       });
     }
 
-    let orderedChapterItems = chapterItems.reverse();
-    if (chapterPagesCount > 1 && orderedChapterItems.length <= 50) {
-      const chaptersFromNavigation = await this.collectChaptersByNavigation(
-        loadedCheerio,
-        normalizedNovelPath,
-      );
-      if (chaptersFromNavigation.length > orderedChapterItems.length) {
-        orderedChapterItems = chaptersFromNavigation;
-      }
-    }
+    const orderedChapterItems = chapterItems.reverse();
 
     novel.chapters = orderedChapterItems.map((chapter, chapterIndex) => ({
       ...chapter,
@@ -161,59 +152,8 @@ class Jaomix implements Plugin.PluginBase {
     }
   }
 
-  async collectChaptersByNavigation(
-    loadedCheerio: ReturnType<typeof parseHTML>,
-    novelPath: string,
-  ): Promise<Omit<Plugin.ChapterItem, 'chapterNumber'>[]> {
-    const firstChapterUrl =
-      loadedCheerio('.link-last-first-chapter .ins-first a').attr('href') ||
-      loadedCheerio('.ins-first a').attr('href');
-    if (!firstChapterUrl) return [];
-
-    const chapters: Omit<Plugin.ChapterItem, 'chapterNumber'>[] = [];
-    const visitedPaths = new Set<string>();
-    let currentChapterUrl = firstChapterUrl;
-
-    for (let safetyCounter = 0; safetyCounter < 1500; safetyCounter++) {
-      try {
-        const chapterResponse = await fetchApi(currentChapterUrl);
-        if (!chapterResponse.ok) break;
-
-        const chapterBody = await chapterResponse.text();
-        const chapterCheerio = parseHTML(chapterBody);
-        const canonicalUrl =
-          chapterCheerio('link[rel="canonical"]').attr('href') ||
-          chapterCheerio('meta[property="og:url"]').attr('content') ||
-          currentChapterUrl;
-        const chapterPath = this.toPath(canonicalUrl);
-        if (
-          !chapterPath.startsWith(novelPath) ||
-          visitedPaths.has(chapterPath)
-        ) {
-          break;
-        }
-
-        visitedPaths.add(chapterPath);
-        const chapterName = chapterCheerio('h1').first().text().trim();
-        const releaseDate = chapterCheerio('time').first().text().trim();
-        chapters.push({
-          name: chapterName || `Chapter ${chapters.length + 1}`,
-          path: chapterPath,
-          releaseTime: this.parseDate(releaseDate),
-        });
-
-        const nextChapterUrl = chapterCheerio('.next a').attr('href');
-        if (!nextChapterUrl) break;
-
-        const nextPath = this.toPath(nextChapterUrl);
-        if (!nextPath.startsWith(novelPath)) break;
-        currentChapterUrl = new URL(nextChapterUrl, this.site).toString();
-      } catch (_) {
-        break;
-      }
-    }
-
-    return chapters;
+  sleep(delayMs: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, delayMs));
   }
 
   async getChapterFragments(
@@ -237,7 +177,9 @@ class Jaomix implements Plugin.PluginBase {
     const cookieHeader = novelResponse.headers
       .get('set-cookie')
       ?.match(/^\s*([^;]+)/)?.[1];
-    for (const page of new Set(chapterPages)) {
+    const pagesToLoad = [...new Set(chapterPages)].slice(0, 30);
+    let sequentialFailures = 0;
+    for (const page of pagesToLoad) {
       if (baseChapterHtml && page === '1') continue;
 
       try {
@@ -245,8 +187,9 @@ class Jaomix implements Plugin.PluginBase {
           'action=loadpagenavchapstt&page=' + encodeURIComponent(page);
         const headers: Record<string, string> = {
           'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          Accept: '*/*',
+          'X-Requested-With': 'XMLHttpRequest',
           Referer: novelUrl,
-          'x-referer': novelUrl,
         };
         if (cookieHeader) headers.Cookie = cookieHeader;
 
@@ -255,9 +198,19 @@ class Jaomix implements Plugin.PluginBase {
           novelUrl,
           headers,
         );
-        if (!chapterHtml) continue;
+        if (!chapterHtml) {
+          sequentialFailures += 1;
+          if (sequentialFailures >= 3) break;
+          await this.sleep(300);
+          continue;
+        }
+        sequentialFailures = 0;
         chapterFragments.push(chapterHtml);
+        await this.sleep(150);
       } catch (_) {
+        sequentialFailures += 1;
+        if (sequentialFailures >= 3) break;
+        await this.sleep(300);
         continue;
       }
     }
@@ -321,9 +274,7 @@ class Jaomix implements Plugin.PluginBase {
       const contentNode = loadedCheerio(selector).first().clone();
       if (!contentNode.length) continue;
       hasCaptchaGate =
-        hasCaptchaGate ||
-        contentNode.find('.but-captcha').length > 0 ||
-        /загрузки полной главы/i.test(contentNode.text());
+        hasCaptchaGate || contentNode.find('.but-captcha').length > 0;
       contentNode
         .find(
           'script, style, iframe, noscript, .but-captcha, .block-capth, [class^="block-capth"], [class*=" block-capth"]',
