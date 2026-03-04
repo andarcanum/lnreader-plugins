@@ -70,6 +70,18 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
     const pushState = (state: ParsingState) => stateStack.push(state);
     const popState = () =>
       stateStack.length > 1 ? stateStack.pop() : currentState();
+    const isMainNovelListContainer = (cls: string) => {
+      const isListNovel =
+        cls.includes('list-novel') &&
+        !cls.includes('list-side') &&
+        !cls.includes('list-cat');
+      const isListTruyen =
+        cls.includes('list-truyen') &&
+        !cls.includes('list-side') &&
+        !cls.includes('list-cat');
+
+      return cls.includes('col-content') || isListNovel || isListTruyen;
+    };
 
     const parser = new Parser({
       onopentag: (name, attribs) => {
@@ -77,12 +89,7 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
         const cls = attribs.class || '';
 
         if (state === ParsingState.Idle) {
-          if (
-            cls.includes('archive') ||
-            cls.includes('col-content') ||
-            cls.includes('list-novel') ||
-            attribs.id === 'list-page'
-          ) {
+          if (isMainNovelListContainer(cls)) {
             pushState(ParsingState.NovelList);
             depth = 0;
           }
@@ -95,8 +102,9 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
             pushState(ParsingState.NovelName);
           }
           if (name === 'img') {
-            const cover = attribs['data-src'] || attribs.src;
-            if (cover) {
+            const cover =
+              attribs['data-src'] || attribs['data-cfsrc'] || attribs.src;
+            if (cover && !cover.startsWith('data:image/')) {
               tempNovel.cover = new URL(cover, this.site).href;
             }
           }
