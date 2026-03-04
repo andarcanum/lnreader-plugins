@@ -9,7 +9,7 @@ class Jaomix implements Plugin.PagePlugin {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.13';
+  version = '1.0.12';
   icon = 'src/ru/jaomix/icon.png';
 
   async popularNovels(
@@ -77,14 +77,13 @@ class Jaomix implements Plugin.PagePlugin {
   ): Promise<Plugin.SourceNovel & { totalPages: number }> {
     const body = await fetchApi(this.site + novelPath).then(res => res.text());
     const loadedCheerio = parseHTML(body);
-    const totalPages = Math.max(loadedCheerio('.sel-toc > option').length, 1);
 
     const novel: Plugin.SourceNovel & { totalPages: number } = {
       path: novelPath,
       name: loadedCheerio('div[class="desc-book"] > h1').text().trim(),
       cover: loadedCheerio('div[class="img-book"] > img').attr('src'),
       summary: loadedCheerio('div[id="desc-tab"]').text().trim(),
-      totalPages,
+      totalPages: loadedCheerio('.sel-toc > option').length,
     };
 
     loadedCheerio('#info-book > p').each(function () {
@@ -99,8 +98,7 @@ class Jaomix implements Plugin.PagePlugin {
           : NovelStatus.Completed;
       }
     });
-    // For paginated TOC (>1 page), return empty chapters here so caller loads all pages via parsePage.
-    novel.chapters = totalPages > 1 ? [] : this.parseChapters(loadedCheerio);
+    novel.chapters = this.parseChapters(loadedCheerio);
     return novel;
   }
 
