@@ -71,6 +71,8 @@
     "sourceSite": "https://novgo.net/",
     "sourceName": "AllNovelFull",
     "options": {
+      "versionIncrements": 1,
+      "preferNovelDetailCover": true,
       "latestPage": "latest-release-novel",
       "searchPage": "search",
       "chapterListing": "ajax-chapter-option"

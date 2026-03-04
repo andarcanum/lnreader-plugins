@@ -7,6 +7,7 @@ import { Filters } from '@libs/filterInputs';
 type ReadNovelFullOptions = {
   lang?: string;
   versionIncrements?: number;
+  preferNovelDetailCover?: boolean;
   latestPage: string;
   searchPage: string;
   chapterListing?: string;
@@ -41,6 +42,7 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
   version: string;
   options: ReadNovelFullOptions;
   filters?: Filters | undefined;
+  detailCoverCache: Record<string, string | null> = {};
 
   constructor(metadata: ReadNovelFullMetadata) {
     this.id = metadata.id;
@@ -58,6 +60,106 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
 
   async sleep(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  extractDetailCover(html: string): string | null {
+    let detailCover: string | null = null;
+    let inCoverBlock = false;
+    let depth = 0;
+
+    const parser = new Parser({
+      onopentag: (name, attribs) => {
+        if (detailCover) return;
+
+        if (name === 'div') {
+          const cls = attribs.class || '';
+          if (
+            !inCoverBlock &&
+            (cls.includes('books') || cls.includes('m-imgtxt'))
+          ) {
+            inCoverBlock = true;
+            depth = 0;
+            return;
+          }
+
+          if (inCoverBlock) {
+            depth++;
+          }
+        }
+
+        if (inCoverBlock && name === 'img') {
+          const cover =
+            attribs.src ?? attribs['data-cfsrc'] ?? attribs['data-src'];
+          if (cover && !cover.startsWith('data:image/')) {
+            detailCover = new URL(cover, this.site).href;
+          }
+        }
+      },
+      onclosetag: name => {
+        if (!inCoverBlock || name !== 'div') return;
+
+        depth--;
+        if (depth < 0) {
+          inCoverBlock = false;
+        }
+      },
+    });
+
+    parser.write(html);
+    parser.end();
+
+    return detailCover;
+  }
+
+  async getNovelDetailCover(novelPath: string): Promise<string | null> {
+    const cachedCover = this.detailCoverCache[novelPath];
+    if (typeof cachedCover !== 'undefined') {
+      return cachedCover;
+    }
+
+    try {
+      const result = await fetchApi(`${this.site}${novelPath}`);
+      if (!result.ok) {
+        this.detailCoverCache[novelPath] = null;
+        return null;
+      }
+
+      const html = await result.text();
+      const detailCover = this.extractDetailCover(html);
+      this.detailCoverCache[novelPath] = detailCover;
+      return detailCover;
+    } catch {
+      this.detailCoverCache[novelPath] = null;
+      return null;
+    }
+  }
+
+  async resolveNovelCovers(
+    novels: Plugin.NovelItem[],
+  ): Promise<Plugin.NovelItem[]> {
+    const result: Plugin.NovelItem[] = [];
+    const chunkSize = 4;
+
+    for (let i = 0; i < novels.length; i += chunkSize) {
+      const chunk = novels.slice(i, i + chunkSize);
+      const resolvedChunk = await Promise.all(
+        chunk.map(async novel => {
+          if (!novel.path) return novel;
+
+          const detailCover = await this.getNovelDetailCover(novel.path);
+          if (!detailCover) return novel;
+
+          return {
+            ...novel,
+            cover: detailCover,
+          };
+        }),
+      );
+
+      result.push(...resolvedChunk);
+    }
+
+    return result;
   }
 
   parseNovels(html: string) {
@@ -230,7 +332,13 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
       );
     }
     const html = await result.text();
-    return this.parseNovels(html);
+    const novels = this.parseNovels(html);
+
+    if (!this.options.preferNovelDetailCover) {
+      return novels;
+    }
+
+    return this.resolveNovelCovers(novels);
   }
 
   async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
