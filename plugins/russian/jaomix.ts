@@ -9,7 +9,7 @@ class Jaomix implements Plugin.PluginBase {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.10';
+  version = '1.0.11';
   icon = 'src/ru/jaomix/icon.png';
   chapterListCache = new Map<
     string,
