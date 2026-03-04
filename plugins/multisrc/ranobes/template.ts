@@ -2,6 +2,7 @@ import { Parser } from 'htmlparser2';
 import { fetchApi } from '@libs/fetch';
 import { Plugin } from '@/types/plugin';
 import { NovelStatus } from '@libs/novelStatus';
+import { Filters, FilterTypes } from '@libs/filterInputs';
 
 type RanobesOptions = {
   lang?: string;
@@ -22,14 +23,16 @@ class RanobesPlugin implements Plugin.PluginBase {
   site: string;
   version: string;
   options: RanobesOptions;
+  filters: Filters;
 
   constructor(metadata: RanobesMetadata) {
     this.id = metadata.id;
     this.name = metadata.sourceName;
     this.icon = 'multisrc/ranobes/ranobes/icon.png';
     this.site = metadata.sourceSite;
-    this.version = '2.0.2';
+    this.version = '2.1.0';
     this.options = metadata.options as RanobesOptions;
+    this.filters = this.createFilters();
   }
 
   async safeFecth(url: string, init: any = {}): Promise<string> {
@@ -174,8 +177,199 @@ class RanobesPlugin implements Plugin.PluginBase {
     return now.toISOString();
   };
 
-  async popularNovels(page: number): Promise<Plugin.NovelItem[]> {
-    const link = `${this.site}/${this.options.path}/page/${page}/`;
+  private getFilterConfig() {
+    if (this.id === 'ranobes-ru') {
+      return {
+        includeLanguageKey: 'b.country',
+        excludeLanguageKey: 'v.country',
+        translationStatusOptions: [
+          { label: 'Any', value: '' },
+          {
+            label: 'Active',
+            value: '\u0410\u043a\u0442\u0438\u0432\u0435\u043d',
+          },
+          {
+            label: 'Completed',
+            value: '\u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u043e',
+          },
+          {
+            label: 'Waiting for chapters',
+            value:
+              '\u0412 \u043e\u0436\u0438\u0434\u0430\u043d\u0438\u0439 \u0433\u043b\u0430\u0432',
+          },
+          {
+            label: 'Not active',
+            value: '\u041d\u0435 \u0430\u043a\u0442\u0438\u0432\u0435\u043d',
+          },
+        ],
+        originalStatusOptions: [
+          { label: 'Any', value: '' },
+          {
+            label: 'Ongoing',
+            value: '\u0412 \u043f\u0440\u043e\u0446\u0435\u0441\u0441\u0435',
+          },
+          {
+            label: 'Completed',
+            value: '\u0417\u0430\u0432\u0435\u0440\u0448\u0435\u043d\u043e',
+          },
+          {
+            label: 'Hiatus',
+            value:
+              '\u041e\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d',
+          },
+          { label: 'Dropped', value: '\u0423\u0434\u0430\u043b\u0435\u043d' },
+        ],
+        languageOptions: [
+          {
+            label: 'Chinese',
+            value: '\u041a\u0438\u0442\u0430\u0439\u0441\u043a\u0438\u0439',
+          },
+          {
+            label: 'Korean',
+            value: '\u041a\u043e\u0440\u0435\u0439\u0441\u043a\u0438\u0439',
+          },
+          {
+            label: 'Russian',
+            value: '\u0420\u0443\u0441\u0441\u043a\u0438\u0439',
+          },
+          {
+            label: 'Japanese',
+            value: '\u042f\u043f\u043e\u043d\u0441\u043a\u0438\u0439',
+          },
+          {
+            label: 'English',
+            value:
+              '\u0410\u043d\u0433\u043b\u0438\u0439\u0441\u043a\u0438\u0439',
+          },
+        ],
+      };
+    }
+
+    return {
+      includeLanguageKey: 'b.languages',
+      excludeLanguageKey: 'v.languages',
+      translationStatusOptions: [
+        { label: 'Any', value: '' },
+        { label: 'Active', value: 'Active' },
+        { label: 'Completed', value: 'Completed' },
+        { label: 'Unknown', value: 'Unknown' },
+        { label: 'Break', value: 'Break' },
+      ],
+      originalStatusOptions: [
+        { label: 'Any', value: '' },
+        { label: 'Ongoing', value: 'Ongoing' },
+        { label: 'Completed', value: 'Completed' },
+        { label: 'Hiatus', value: 'Hiatus' },
+        { label: 'Dropped', value: 'Dropped' },
+      ],
+      languageOptions: [
+        { label: 'Chinese', value: 'Chinese' },
+        { label: 'Korean', value: 'Korean' },
+        { label: 'English', value: 'English' },
+        { label: 'Japanese', value: 'Japanese' },
+      ],
+    };
+  }
+
+  private createFilters(): Filters {
+    const config = this.getFilterConfig();
+    return {
+      sort: {
+        label: 'Sort by',
+        value: '',
+        options: [
+          { label: 'Default', value: '' },
+          { label: 'Latest updates', value: 'date;desc' },
+          { label: 'Oldest updates', value: 'date;asc' },
+          { label: 'Rating', value: 'rating' },
+          { label: 'Title A-Z', value: 'title;asc' },
+          { label: 'Comments desc', value: 'comm_num;desc' },
+          { label: 'Comments asc', value: 'comm_num;asc' },
+          { label: 'Views desc', value: 'news_read;desc' },
+          { label: 'Views asc', value: 'news_read;asc' },
+          { label: 'Chapters desc', value: 'd.chap-num;desc' },
+          { label: 'Chapters asc', value: 'd.chap-num;asc' },
+          { label: 'Year desc', value: 'd.year;desc' },
+        ],
+        type: FilterTypes.Picker,
+      },
+      translationStatus: {
+        label: 'Translation status',
+        value: '',
+        options: config.translationStatusOptions,
+        type: FilterTypes.Picker,
+      },
+      originalStatus: {
+        label: 'Original status',
+        value: '',
+        options: config.originalStatusOptions,
+        type: FilterTypes.Picker,
+      },
+      languages: {
+        label: 'Languages',
+        value: {
+          include: [],
+          exclude: [],
+        },
+        options: config.languageOptions,
+        type: FilterTypes.ExcludableCheckboxGroup,
+      },
+      minChapters: {
+        label: 'Min chapters',
+        value: '',
+        type: FilterTypes.TextInput,
+      },
+      maxChapters: {
+        label: 'Max chapters',
+        value: '',
+        type: FilterTypes.TextInput,
+      },
+    } satisfies Filters;
+  }
+
+  async popularNovels(
+    page: number,
+    {
+      filters,
+      showLatestNovels,
+    }: Plugin.PopularNovelsOptions<typeof this.filters>,
+  ): Promise<Plugin.NovelItem[]> {
+    const selectedSort = (filters?.sort?.value as string) || '';
+    const selectedTranslationStatus =
+      (filters?.translationStatus?.value as string) || '';
+    const selectedOriginalStatus =
+      (filters?.originalStatus?.value as string) || '';
+    const selectedMinChapters = (filters?.minChapters?.value as string) || '';
+    const selectedMaxChapters = (filters?.maxChapters?.value as string) || '';
+    const selectedLanguages = (filters?.languages?.value as
+      | { include?: string[]; exclude?: string[] }
+      | undefined) || { include: [], exclude: [] };
+
+    const config = this.getFilterConfig();
+    const params = new URLSearchParams();
+    const sortValue = showLatestNovels ? 'date;desc' : selectedSort;
+
+    if (sortValue) params.append('sort', sortValue);
+    if (selectedTranslationStatus)
+      params.append('status-trs', selectedTranslationStatus);
+    if (selectedOriginalStatus)
+      params.append('status-end', selectedOriginalStatus);
+    if (selectedMinChapters.trim())
+      params.append('f.chap-num', selectedMinChapters.trim());
+    if (selectedMaxChapters.trim())
+      params.append('t.chap-num', selectedMaxChapters.trim());
+
+    (selectedLanguages.include || []).forEach(language =>
+      params.append(config.includeLanguageKey, language),
+    );
+    (selectedLanguages.exclude || []).forEach(language =>
+      params.append(config.excludeLanguageKey, language),
+    );
+
+    const query = params.toString();
+    const link = query
+      ? `${this.site}/${this.options.path}/page/${page}/?${query}`
+      : `${this.site}/${this.options.path}/page/${page}/`;
     const body = await this.safeFecth(link);
     return this.parseNovels(body);
   }
