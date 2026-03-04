@@ -243,28 +243,11 @@ class Jaomix implements Plugin.PluginBase {
       try {
         const pageBody =
           'action=loadpagenavchapstt&page=' + encodeURIComponent(page);
-        const minimalHeaders: Record<string, string> = {
-          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-          Referer: novelUrl,
-          Accept: '*/*',
-        };
-        let chapterHtml = await this.loadAjaxChapterPage(
+        const chapterHtml = await this.loadAjaxChapterPage(
           pageBody,
-          minimalHeaders,
+          novelUrl,
+          cookieHeader,
         );
-
-        // Fallback for local dev proxy path where referer can be rewritten.
-        if (!chapterHtml) {
-          const proxyHeaders: Record<string, string> = {
-            ...minimalHeaders,
-            'X-Requested-With': 'XMLHttpRequest',
-            'x-referer': novelUrl,
-          };
-          if (cookieHeader) {
-            proxyHeaders.Cookie = cookieHeader + '; i18n_redirected=ru';
-          }
-          chapterHtml = await this.loadAjaxChapterPage(pageBody, proxyHeaders);
-        }
 
         if (!chapterHtml) {
           sequentialFailures += 1;
@@ -288,24 +271,67 @@ class Jaomix implements Plugin.PluginBase {
 
   async loadAjaxChapterPage(
     pageBody: string,
-    headers: Record<string, string>,
+    novelUrl: string,
+    cookieHeader?: string,
   ): Promise<string> {
-    const chapterPageResponse = await fetchApi(
-      this.site + '/wp-admin/admin-ajax.php',
+    const endpoint = this.site + '/wp-admin/admin-ajax.php';
+    const requestVariants: Array<{
+      headers: Record<string, string>;
+      referrer?: string;
+      referrerPolicy?: string;
+    }> = [
       {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          Referer: novelUrl,
+          Accept: '*/*',
+        },
+      },
+      // Mobile runtime fallback where Referer header may be blocked.
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          Accept: '*/*',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        referrer: novelUrl,
+        referrerPolicy: 'strict-origin-when-cross-origin',
+      },
+      // Local proxy fallback where referer can be forwarded via x-referer.
+      {
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          Accept: '*/*',
+          'X-Requested-With': 'XMLHttpRequest',
+          'x-referer': novelUrl,
+          ...(cookieHeader
+            ? { Cookie: cookieHeader + '; i18n_redirected=ru' }
+            : {}),
+        },
+      },
+    ];
+
+    for (const requestInit of requestVariants) {
+      const chapterPageResponse = await fetchApi(endpoint, {
         method: 'POST',
-        headers,
+        headers: requestInit.headers,
         credentials: 'include',
         body: pageBody,
-      },
-    );
-    if (!chapterPageResponse.ok) return '';
+        ...(requestInit.referrer ? { referrer: requestInit.referrer } : {}),
+        ...(requestInit.referrerPolicy
+          ? { referrerPolicy: requestInit.referrerPolicy }
+          : {}),
+      });
+      if (!chapterPageResponse.ok) continue;
 
-    const chapterHtml = await chapterPageResponse.text();
-    const hasChapterMarkup =
-      chapterHtml.includes('class="title"') ||
-      chapterHtml.includes("class='title'");
-    return hasChapterMarkup ? chapterHtml : '';
+      const chapterHtml = await chapterPageResponse.text();
+      const hasChapterMarkup =
+        chapterHtml.includes('class="title"') ||
+        chapterHtml.includes("class='title'");
+      if (hasChapterMarkup) return chapterHtml;
+    }
+
+    return '';
   }
 
   async parseChapter(chapterPath: string): Promise<string> {
