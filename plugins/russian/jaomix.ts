@@ -9,7 +9,7 @@ class Jaomix implements Plugin.PluginBase {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.9';
+  version = '1.0.10';
   icon = 'src/ru/jaomix/icon.png';
   chapterListCache = new Map<
     string,
@@ -201,7 +201,7 @@ class Jaomix implements Plugin.PluginBase {
     const cookieHeader = novelResponse.headers
       .get('set-cookie')
       ?.match(/^\s*([^;]+)/)?.[1];
-    const pagesToLoad = [...new Set(chapterPages)].slice(0, 20);
+    const pagesToLoad = [...new Set(chapterPages)];
     let sequentialFailures = 0;
 
     for (const page of pagesToLoad) {
