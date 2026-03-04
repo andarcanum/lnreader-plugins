@@ -9,7 +9,7 @@ import { storage } from '@libs/storage';
 class NovelFire implements Plugin.PluginBase {
   id = 'novelfire';
   name = 'Novel Fire';
-  version = '1.1.7';
+  version = '1.1.8';
   icon = 'src/en/novelfire/icon.png';
   site = 'https://novelfire.net/';
 
@@ -52,7 +52,10 @@ class NovelFire implements Plugin.PluginBase {
     }
     let url = this.site + 'search-adv';
     if (showLatestNovels) {
-      url += `?ctgcon=and&totalchapter=0&ratcon=min&rating=0&status=-1&sort=date&tagcon=and&page=${pageNo}`;
+      url = `${this.site}latest-release-novels`;
+      if (pageNo > 1) {
+        url += `?page=${pageNo}`;
+      }
     } else if (filters) {
       const params = new URLSearchParams();
       for (const language of filters.language.value) {
@@ -77,8 +80,12 @@ class NovelFire implements Plugin.PluginBase {
 
     return loadedCheerio('.novel-item')
       .map((index, ele) => {
+        const titleAnchor = loadedCheerio(ele).find('.novel-title > a').first();
+        const coverAnchor = loadedCheerio(ele).find('.cover-wrap > a').first();
         const novelName =
-          loadedCheerio(ele).find('.novel-title > a').text() ||
+          titleAnchor.text().trim() ||
+          coverAnchor.attr('title') ||
+          loadedCheerio(ele).find('.novel-title').text().trim() ||
           'No Title Found';
         const novelCover =
           this.site +
@@ -86,9 +93,7 @@ class NovelFire implements Plugin.PluginBase {
             loadedCheerio(ele).find('.novel-cover > img').attr('data-src') ||
               '',
           );
-        const novelPath = loadedCheerio(ele)
-          .find('.novel-title > a')
-          .attr('href');
+        const novelPath = titleAnchor.attr('href') || coverAnchor.attr('href');
 
         if (!novelPath) return;
 
