@@ -9,7 +9,7 @@ class Jaomix implements Plugin.PluginBase {
   id = 'jaomix.ru';
   name = 'Jaomix';
   site = 'https://jaomix.ru';
-  version = '1.0.8';
+  version = '1.0.9';
   icon = 'src/ru/jaomix/icon.png';
   chapterListCache = new Map<
     string,
@@ -315,28 +315,43 @@ class Jaomix implements Plugin.PluginBase {
 
   async loadChapterFromMirror(chapterPath: string): Promise<string> {
     const chapterUrl = new URL(chapterPath, this.site).toString();
-    const mirrorUrl =
-      'https://r.jina.ai/http://r.jina.ai/' +
-      chapterUrl.replace(/^https?:\/\//, 'http://');
+    const normalizedChapterUrl = chapterUrl.replace(/^https?:\/\//, '');
+    const mirrorUrls = [
+      `https://r.jina.ai/http://${normalizedChapterUrl}`,
+      `https://r.jina.ai/http://r.jina.ai/http://${normalizedChapterUrl}`,
+      `https://r.jina.ai/http://r.jina.ai/https://${normalizedChapterUrl}`,
+    ];
 
-    try {
-      const mirrorResponse = await fetchApi(mirrorUrl);
-      if (!mirrorResponse.ok) return '';
+    for (const mirrorUrl of mirrorUrls) {
+      try {
+        const mirrorResponse = await fetchApi(mirrorUrl, {
+          headers: {
+            Accept: 'text/plain,*/*',
+            'User-Agent':
+              'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36',
+          },
+        });
+        if (!mirrorResponse.ok) continue;
 
-      const mirrorBody = await mirrorResponse.text();
-      const markdownMarker = 'Markdown Content:';
-      const markdownMarkerIndex = mirrorBody.indexOf(markdownMarker);
-      if (markdownMarkerIndex === -1) return '';
+        const mirrorBody = await mirrorResponse.text();
+        const markdownMarker = 'Markdown Content:';
+        const markdownMarkerIndex = mirrorBody.indexOf(markdownMarker);
+        if (markdownMarkerIndex === -1) continue;
 
-      const markdownChapterText = mirrorBody
-        .slice(markdownMarkerIndex + markdownMarker.length)
-        .trim();
-      if (!markdownChapterText) return '';
+        const markdownChapterText = mirrorBody
+          .slice(markdownMarkerIndex + markdownMarker.length)
+          .trim();
+        if (!markdownChapterText || markdownChapterText.length < 120) {
+          continue;
+        }
 
-      return this.markdownTextToHtml(markdownChapterText);
-    } catch (_) {
-      return '';
+        return this.markdownTextToHtml(markdownChapterText);
+      } catch (_) {
+        continue;
+      }
     }
+
+    return '';
   }
 
   markdownTextToHtml(markdownText: string): string {
