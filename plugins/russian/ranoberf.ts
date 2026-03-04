@@ -11,9 +11,12 @@ const regex =
 class RNRF implements Plugin.PluginBase {
   id = 'RNRF';
   name = 'РанобэРФ';
-  site = 'https://ранобэ.рф';
-  version = '1.0.1';
+  site = 'https://xn--80ac9aeh6f.xn--p1ai';
+  version = '1.0.2';
   icon = 'src/ru/ranoberf/icon.png';
+
+  private getCoverUrl = (coverPath?: string) =>
+    coverPath ? new URL(coverPath, this.site).toString() : defaultCover;
 
   async popularNovels(
     pageNo: number,
@@ -35,9 +38,7 @@ class RNRF implements Plugin.PluginBase {
       json.props.pageProps?.totalData?.items?.forEach(novel =>
         novels.push({
           name: novel.title,
-          cover: novel?.verticalImage?.url
-            ? this.site + novel.verticalImage.url
-            : defaultCover,
+          cover: this.getCoverUrl(novel?.verticalImage?.url),
           path: '/' + novel.slug,
         }),
       );
@@ -60,9 +61,7 @@ class RNRF implements Plugin.PluginBase {
       novel.name = book.title;
       novel.summary = book.description;
 
-      novel.cover = book.verticalImage?.url
-        ? this.site + book.verticalImage.url
-        : defaultCover;
+      novel.cover = this.getCoverUrl(book.verticalImage?.url);
       novel.status = book?.additionalInfo.includes('Активен')
         ? NovelStatus.Ongoing
         : NovelStatus.Completed;
@@ -116,9 +115,7 @@ class RNRF implements Plugin.PluginBase {
     items.forEach(novel =>
       novels.push({
         name: novel.title,
-        cover: novel?.verticalImage?.url
-          ? this.site + novel.verticalImage.url
-          : defaultCover,
+        cover: this.getCoverUrl(novel?.verticalImage?.url),
         path: '/' + novel.slug,
       }),
     );
