@@ -180,6 +180,38 @@ class Jaomix implements Plugin.PluginBase {
     return new Promise(resolve => setTimeout(resolve, delayMs));
   }
 
+  getHeaderValue(headers: unknown, headerName: string): string | undefined {
+    if (!headers || typeof headers !== 'object') return undefined;
+
+    const dynamicHeaders = headers as {
+      get?: (name: string) => string | null;
+      [key: string]: unknown;
+    };
+
+    if (typeof dynamicHeaders.get === 'function') {
+      const byGet =
+        dynamicHeaders.get(headerName) ||
+        dynamicHeaders.get(headerName.toLowerCase());
+      if (byGet && byGet.trim()) return byGet;
+    }
+
+    const rawValue =
+      dynamicHeaders[headerName.toLowerCase()] ??
+      dynamicHeaders[headerName] ??
+      dynamicHeaders[headerName.toUpperCase()];
+
+    if (Array.isArray(rawValue)) {
+      const firstString = rawValue.find(
+        item => typeof item === 'string' && item.trim(),
+      );
+      return typeof firstString === 'string' ? firstString : undefined;
+    }
+
+    return typeof rawValue === 'string' && rawValue.trim()
+      ? rawValue
+      : undefined;
+  }
+
   async getChapterFragments(
     loadedCheerio: ReturnType<typeof parseHTML>,
     novelUrl: string,
@@ -198,9 +230,10 @@ class Jaomix implements Plugin.PluginBase {
         ? chapterFragments
         : [loadedCheerio.html()];
 
-    const cookieHeader = novelResponse.headers
-      .get('set-cookie')
-      ?.match(/^\s*([^;]+)/)?.[1];
+    const cookieHeader = this.getHeaderValue(
+      novelResponse.headers,
+      'set-cookie',
+    )?.match(/^\s*([^;]+)/)?.[1];
     const pagesToLoad = [...new Set(chapterPages)];
     let sequentialFailures = 0;
 
