@@ -9,7 +9,69 @@ class ScribbleHubPlugin implements Plugin.PluginBase {
   name = 'Scribble Hub';
   icon = 'src/en/scribblehub/icon.png';
   site = 'https://www.scribblehub.com/';
-  version = '1.0.2';
+  version = '1.0.3';
+
+  normalizePath(url?: string) {
+    if (!url) return null;
+
+    try {
+      const absoluteUrl = new URL(url, this.site).href;
+      return absoluteUrl.replace(this.site, '');
+    } catch {
+      return null;
+    }
+  }
+
+  parseSeriesAnchorNovels(
+    loadedCheerio: CheerioAPI,
+    rootSelector?: string,
+  ): Plugin.NovelItem[] {
+    const novelsByPath = new Map<string, Plugin.NovelItem>();
+    const root = rootSelector
+      ? loadedCheerio(rootSelector)
+      : loadedCheerio.root();
+    if (!root.length) return [];
+
+    root.find('a[href*="/series/"]').each((i, el) => {
+      const anchor = loadedCheerio(el);
+      const href = anchor.attr('href');
+      const path = this.normalizePath(href);
+      if (!path) return;
+
+      const titleText =
+        anchor.attr('title') ||
+        anchor.text().trim() ||
+        anchor.find('img').attr('alt') ||
+        '';
+      const imgFromAnchor = anchor.find('img').attr('src');
+      const imgFromContext =
+        anchor.closest('tr').find('img').first().attr('src') ||
+        anchor.closest('li').find('img').first().attr('src') ||
+        anchor.closest('.search_main_box').find('img').first().attr('src') ||
+        anchor.closest('div').find('img').first().attr('src');
+      const cover = imgFromAnchor || imgFromContext;
+
+      const existing = novelsByPath.get(path);
+      if (existing) {
+        if (!existing.name && titleText) {
+          existing.name = titleText;
+        }
+        if (!existing.cover && cover) {
+          existing.cover = cover;
+        }
+        novelsByPath.set(path, existing);
+        return;
+      }
+
+      novelsByPath.set(path, {
+        name: titleText || 'Untitled',
+        cover,
+        path,
+      });
+    });
+
+    return Array.from(novelsByPath.values());
+  }
 
   parseNovels(loadedCheerio: CheerioAPI) {
     const novels: Plugin.NovelItem[] = [];
@@ -30,7 +92,10 @@ class ScribbleHubPlugin implements Plugin.PluginBase {
       };
       novels.push(novel);
     });
-    return novels;
+
+    if (novels.length) return novels;
+
+    return this.parseSeriesAnchorNovels(loadedCheerio);
   }
 
   async popularNovels(
@@ -42,6 +107,17 @@ class ScribbleHubPlugin implements Plugin.PluginBase {
   ): Promise<Plugin.NovelItem[]> {
     let url = `${this.site}`;
     if (showLatestNovels) {
+      if (page === 1) {
+        const homeBody = await fetchApi(url).then(result => result.text());
+        const homeCheerio = parseHTML(homeBody);
+        const latestUpdates = this.parseSeriesAnchorNovels(
+          homeCheerio,
+          '.latest_releases_main',
+        );
+
+        if (latestUpdates.length) return latestUpdates;
+      }
+
       url += `latest-series/?pg=${page}`;
     } else if (filters) {
       const params = new URLSearchParams();
@@ -75,7 +151,7 @@ class ScribbleHubPlugin implements Plugin.PluginBase {
       params.append('pg', page.toString());
       url += `series-finder/?sf=1&${params.toString()}`;
     } else {
-      url += `series-finder/?sf=1&sort=ratings&order=desc&pg=${page}`;
+      url += `series-ranking/?sort=1&order=4&pg=${page}`;
     }
 
     const body = await fetchApi(url).then(result => result.text());
