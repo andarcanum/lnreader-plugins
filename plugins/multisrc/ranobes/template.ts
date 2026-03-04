@@ -279,19 +279,34 @@ class RanobesPlugin implements Plugin.PluginBase {
         value: '',
         options: [
           { label: 'Default', value: '' },
-          { label: 'Latest updates', value: 'date;desc' },
-          { label: 'Oldest updates', value: 'date;asc' },
+          { label: 'Latest updates', value: 'date' },
           { label: 'Rating', value: 'rating' },
-          { label: 'Title A-Z', value: 'title;asc' },
-          { label: 'Comments desc', value: 'comm_num;desc' },
-          { label: 'Comments asc', value: 'comm_num;asc' },
-          { label: 'Views desc', value: 'news_read;desc' },
-          { label: 'Views asc', value: 'news_read;asc' },
-          { label: 'Chapters desc', value: 'd.chap-num;desc' },
-          { label: 'Chapters asc', value: 'd.chap-num;asc' },
-          { label: 'Year desc', value: 'd.year;desc' },
+          { label: 'Title', value: 'title' },
+          { label: 'Comments', value: 'comm_num' },
+          { label: 'Views', value: 'news_read' },
+          { label: 'Chapters', value: 'd.chap-num' },
+          { label: 'Year', value: 'd.year' },
         ],
         type: FilterTypes.Picker,
+      },
+      order: {
+        label: 'Order',
+        value: 'desc',
+        options: [
+          { label: 'Descending', value: 'desc' },
+          { label: 'Ascending', value: 'asc' },
+        ],
+        type: FilterTypes.Picker,
+      },
+      includeGenres: {
+        label: 'Genres (include, comma-separated)',
+        value: '',
+        type: FilterTypes.TextInput,
+      },
+      excludeGenres: {
+        label: 'Genres (exclude, comma-separated)',
+        value: '',
+        type: FilterTypes.TextInput,
       },
       translationStatus: {
         label: 'Translation status',
@@ -335,6 +350,11 @@ class RanobesPlugin implements Plugin.PluginBase {
     }: Plugin.PopularNovelsOptions<typeof this.filters>,
   ): Promise<Plugin.NovelItem[]> {
     const selectedSort = (filters?.sort?.value as string) || '';
+    const selectedOrder = (filters?.order?.value as string) || 'desc';
+    const selectedIncludeGenres =
+      (filters?.includeGenres?.value as string) || '';
+    const selectedExcludeGenres =
+      (filters?.excludeGenres?.value as string) || '';
     const selectedTranslationStatus =
       (filters?.translationStatus?.value as string) || '';
     const selectedOriginalStatus =
@@ -346,30 +366,59 @@ class RanobesPlugin implements Plugin.PluginBase {
       | undefined) || { include: [], exclude: [] };
 
     const config = this.getFilterConfig();
-    const params = new URLSearchParams();
-    const sortValue = showLatestNovels ? 'date;desc' : selectedSort;
+    const sortValue = showLatestNovels ? 'date' : selectedSort;
+    const hasUserFilters =
+      !!selectedIncludeGenres.trim() ||
+      !!selectedExcludeGenres.trim() ||
+      !!selectedTranslationStatus ||
+      !!selectedOriginalStatus ||
+      !!selectedMinChapters.trim() ||
+      !!selectedMaxChapters.trim() ||
+      (selectedLanguages.include?.length || 0) > 0 ||
+      (selectedLanguages.exclude?.length || 0) > 0;
+    const shouldUseFilterPath = hasUserFilters || !!sortValue;
+    const pathSegments: string[] = [];
+    const addSegment = (name: string, value: string) => {
+      const sanitized = value.trim();
+      if (!sanitized) return;
+      pathSegments.push(
+        `${encodeURIComponent(name)}=${encodeURIComponent(sanitized)}`,
+      );
+    };
 
-    if (sortValue) params.append('sort', sortValue);
-    if (selectedTranslationStatus)
-      params.append('status-trs', selectedTranslationStatus);
-    if (selectedOriginalStatus)
-      params.append('status-end', selectedOriginalStatus);
-    if (selectedMinChapters.trim())
-      params.append('f.chap-num', selectedMinChapters.trim());
-    if (selectedMaxChapters.trim())
-      params.append('t.chap-num', selectedMaxChapters.trim());
+    if (shouldUseFilterPath) {
+      if (selectedLanguages.include?.length) {
+        addSegment(
+          config.includeLanguageKey,
+          selectedLanguages.include.join(','),
+        );
+      }
+      if (selectedLanguages.exclude?.length) {
+        addSegment(
+          config.excludeLanguageKey,
+          selectedLanguages.exclude.join(','),
+        );
+      }
+      addSegment('n.genre', selectedIncludeGenres);
+      addSegment('v.genre', selectedExcludeGenres);
+      addSegment('status-trs', selectedTranslationStatus);
+      addSegment('status-end', selectedOriginalStatus);
+      addSegment('f.chap-num', selectedMinChapters);
+      addSegment('t.chap-num', selectedMaxChapters);
+      addSegment('cat', '1');
 
-    (selectedLanguages.include || []).forEach(language =>
-      params.append(config.includeLanguageKey, language),
-    );
-    (selectedLanguages.exclude || []).forEach(language =>
-      params.append(config.excludeLanguageKey, language),
-    );
+      if (sortValue) {
+        addSegment('sort', sortValue);
+        addSegment('order', selectedOrder);
+      }
+    }
 
-    const query = params.toString();
-    const link = query
-      ? `${this.site}/${this.options.path}/page/${page}/?${query}`
-      : `${this.site}/${this.options.path}/page/${page}/`;
+    let link = `${this.site}/${this.options.path}/page/${page}/`;
+    if (pathSegments.length > 0) {
+      link = `${this.site}/f/${pathSegments.join('/')}/`;
+      if (page > 1) link += `page/${page}/`;
+    }
+
     const body = await this.safeFecth(link);
     return this.parseNovels(body);
   }
