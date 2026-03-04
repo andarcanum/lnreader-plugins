@@ -9,7 +9,7 @@ class FreeWebNovelPlugin implements Plugin.PluginBase {
   name = 'Free Web Novel';
   icon = 'multisrc/readnovelfull/fwn.com/icon.png';
   site = 'https://freewebnovel.com/';
-  version = '2.2.4';
+  version = '2.2.5';
 
   lastSearch: number | null = null;
   searchInterval = 3400;
@@ -20,6 +20,7 @@ class FreeWebNovelPlugin implements Plugin.PluginBase {
 
   parseNovels(html: string) {
     const novels: Plugin.NovelItem[] = [];
+    let novelListDepth = 0;
     let currentNovel: Partial<Plugin.NovelItem> & {
       extraInfo?: { status?: string; chapters?: string };
     } = {};
@@ -49,6 +50,8 @@ class FreeWebNovelPlugin implements Plugin.PluginBase {
     const pushState = (state: ParsingState) => stateStack.push(state);
     const popState = () =>
       stateStack.length > 1 ? stateStack.pop() : currentState();
+    const isNovelListContainer = (cls: string, id: string) =>
+      cls.includes('archive') || cls === 'col-content' || id === 'list-page';
 
     const parser = new Parser({
       onopentag: (name, attribs) => {
@@ -56,18 +59,17 @@ class FreeWebNovelPlugin implements Plugin.PluginBase {
         const cls = attribs.class || '';
         const id = attribs.id || '';
 
-        if (state === ParsingState.Idle) {
-          if (
-            cls.includes('archive') ||
-            cls === 'col-content' ||
-            cls.includes('ul-list1') ||
-            id === 'list-page'
-          ) {
-            pushState(ParsingState.NovelList);
-          }
+        if (
+          novelListDepth === 0 &&
+          state === ParsingState.Idle &&
+          isNovelListContainer(cls, id)
+        ) {
+          novelListDepth = 1;
+        } else if (novelListDepth > 0) {
+          novelListDepth++;
         }
 
-        if (currentState() === ParsingState.Idle) return;
+        if (novelListDepth === 0) return;
 
         if (name === 'img') {
           const cover =
@@ -148,6 +150,10 @@ class FreeWebNovelPlugin implements Plugin.PluginBase {
         ) {
           popState();
         }
+
+        if (novelListDepth > 0) {
+          novelListDepth--;
+        }
       },
     });
 
@@ -167,7 +173,7 @@ class FreeWebNovelPlugin implements Plugin.PluginBase {
 
     let url = '';
     const basePage = showLatestNovels
-      ? 'sort/latest-novels'
+      ? 'sort/latest-release'
       : filterGenre
         ? filterGenre
         : filterType;
@@ -575,7 +581,6 @@ enum ParsingState {
   Chapter,
   ChapterList,
   NovelName,
-  NovelList,
   NovelDetails,
   Script,
 }
