@@ -80,6 +80,10 @@ type HexCatalogBook = {
   name?: string | Record<string, unknown>;
 };
 
+type HexLatestFeedItem = {
+  book?: HexCatalogBook;
+};
+
 type HexRichAttachmentApiItem = {
   id?: string;
   image?: string;
@@ -194,7 +198,7 @@ class HexNovels implements Plugin.PluginBase {
   icon = 'src/ru/hexnovels/icon.png';
   site = 'https://hexnovels.me';
   api = 'https://api.hexnovels.me';
-  version = '1.0.12';
+  version = '1.0.13';
 
   async popularNovels(
     pageNo: number,
@@ -203,6 +207,10 @@ class HexNovels implements Plugin.PluginBase {
       filters,
     }: Plugin.PopularNovelsOptions<typeof this.filters>,
   ): Promise<Plugin.NovelItem[]> {
+    if (showLatestNovels) {
+      return this.fetchLatestFeedBooks(pageNo);
+    }
+
     const sortField = showLatestNovels
       ? 'updatedAt'
       : filters?.sortField?.value || 'viewsCount';
@@ -556,6 +564,58 @@ class HexNovels implements Plugin.PluginBase {
       }));
   }
 
+  private async fetchLatestFeedBooks(
+    pageNo: number,
+  ): Promise<Plugin.NovelItem[]> {
+    const novels: Plugin.NovelItem[] = [];
+    const seenPaths = new Set<string>();
+    let feedPage = Math.max(pageNo - 1, 0) * 2;
+    let exhausted = false;
+
+    while (novels.length < 40 && !exhausted) {
+      const items = await this.fetchLatestFeedPage(feedPage);
+      if (!items.length) {
+        exhausted = true;
+        continue;
+      }
+
+      items.forEach(item => {
+        const novel = mapLatestFeedItemToNovelItem(item);
+        if (!novel || seenPaths.has(novel.path)) {
+          return;
+        }
+
+        seenPaths.add(novel.path);
+        novels.push(novel);
+      });
+
+      if (items.length < 20) {
+        exhausted = true;
+      }
+
+      feedPage += 1;
+    }
+
+    return novels.slice(0, 40);
+  }
+
+  private async fetchLatestFeedPage(
+    pageNo: number,
+  ): Promise<HexLatestFeedItem[]> {
+    const query = new URLSearchParams();
+    query.set('onlyBorderChapters', 'true');
+    query.set('sort', 'updatedAt,desc');
+    query.set('page', `${Math.max(pageNo, 0)}`);
+
+    const url = `${this.api}/v2/chapter-update-feed?${query.toString()}`;
+    const result = await fetchApi(url);
+    if (!result.ok) {
+      throw new Error(`Could not reach ${url} (${result.status})`);
+    }
+
+    return (await result.json()) as HexLatestFeedItem[];
+  }
+
   filters = {
     sortField: {
       label: 'Поле сортировки',
@@ -638,6 +698,25 @@ class HexNovels implements Plugin.PluginBase {
 }
 
 export default new HexNovels();
+
+function mapLatestFeedItemToNovelItem(
+  item: HexLatestFeedItem,
+): Plugin.NovelItem | null {
+  const slug = item.book?.slug?.trim();
+  if (!slug) {
+    return null;
+  }
+
+  return {
+    name: pickLocalizedString(item.book?.name) || slug || 'Unknown',
+    path: `/content/${slug}`,
+    cover:
+      typeof item.book?.poster === 'string' &&
+      item.book.poster.trim().length > 0
+        ? item.book.poster.trim()
+        : defaultCover,
+  };
+}
 
 function resolvePath(site: string, path: string): string {
   try {
