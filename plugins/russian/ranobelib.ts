@@ -4,7 +4,6 @@ import { defaultCover } from '@libs/defaultCover';
 import { fetchApi } from '@libs/fetch';
 import { NovelStatus } from '@libs/novelStatus';
 import { storage, localStorage } from '@libs/storage';
-import { proseMirrorToHtml } from '@libs/proseMirrorToHtml';
 import dayjs from 'dayjs';
 
 const statusKey: Record<number, string> = {
@@ -219,7 +218,7 @@ class RLIB implements Plugin.PluginBase {
         result.data.attachments || [],
       );
       if (content?.type == 'doc' && Array.isArray(content.content)) {
-        chapterText = proseMirrorToHtml(content.content, {
+        chapterText = renderRanobeLibProseMirror(content.content, {
           resolveImageUrls: node =>
             resolveRanobeLibImageUrls(
               node.attrs as Attrs | undefined,
@@ -227,7 +226,7 @@ class RLIB implements Plugin.PluginBase {
             ),
         });
       } else if (Array.isArray(content?.content)) {
-        chapterText = proseMirrorToHtml(content.content, {
+        chapterText = renderRanobeLibProseMirror(content.content, {
           resolveImageUrls: node =>
             resolveRanobeLibImageUrls(
               node.attrs as Attrs | undefined,
@@ -522,6 +521,146 @@ class RLIB implements Plugin.PluginBase {
 
 export default new RLIB();
 
+type ProseMirrorImageResolver = (node: HTML) => string[] | string;
+
+type ProseMirrorToHtmlOptions = {
+  resolveImageUrls?: ProseMirrorImageResolver;
+};
+
+function normalizeNodeType(type: unknown): string {
+  if (typeof type !== 'string') return '';
+  return type.toLowerCase().replace(/[_-\s]/g, '');
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function escapeHtmlAttribute(value: unknown): string {
+  return escapeHtml(value).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function normalizeImageUrls(
+  value: string[] | string | undefined,
+  fallback: string | undefined,
+): string[] {
+  const urls = Array.isArray(value) ? value : value ? [value] : [];
+  if (!urls.length && fallback) {
+    return [fallback];
+  }
+  return urls.filter(Boolean);
+}
+
+function applyTextMarks(text: string, marks?: Mark[]): string {
+  if (!marks?.length) return text;
+  return marks.reduce((rendered, mark) => {
+    switch (normalizeNodeType(mark.type)) {
+      case 'bold':
+      case 'strong':
+        return `<b>${rendered}</b>`;
+      case 'italic':
+      case 'em':
+        return `<i>${rendered}</i>`;
+      case 'underline':
+        return `<u>${rendered}</u>`;
+      case 'strike':
+      case 's':
+        return `<s>${rendered}</s>`;
+      case 'code':
+        return `<code>${rendered}</code>`;
+      case 'link': {
+        const href = mark.attrs?.href;
+        if (!href?.trim()) {
+          return rendered;
+        }
+        return `<a href="${escapeHtmlAttribute(href)}">${rendered}</a>`;
+      }
+      default:
+        return rendered;
+    }
+  }, text);
+}
+
+function renderRanobeLibNodes(
+  nodes: HTML[] | undefined,
+  options: ProseMirrorToHtmlOptions,
+): string {
+  if (!Array.isArray(nodes)) return '';
+  return nodes.map(node => renderRanobeLibNode(node, options)).join('');
+}
+
+function renderRanobeLibNode(
+  node: HTML | undefined,
+  options: ProseMirrorToHtmlOptions,
+): string {
+  if (!node || typeof node !== 'object') return '';
+
+  const type = normalizeNodeType(node.type);
+  const children = renderRanobeLibNodes(node.content, options);
+
+  switch (type) {
+    case 'doc':
+      return children;
+    case 'paragraph':
+      return `<p>${children || '<br>'}</p>`;
+    case 'bulletlist':
+      return `<ul>${children || '<br>'}</ul>`;
+    case 'orderedlist':
+      return `<ol>${children || '<br>'}</ol>`;
+    case 'listitem':
+      return `<li>${children || '<br>'}</li>`;
+    case 'blockquote':
+      return `<blockquote>${children || '<br>'}</blockquote>`;
+    case 'hardbreak':
+      return '<br>';
+    case 'horizontalrule':
+    case 'delimiter':
+      return '<hr>';
+    case 'heading': {
+      const levelRaw = Number(node.attrs?.level);
+      const level = levelRaw >= 1 && levelRaw <= 6 ? levelRaw : 2;
+      return `<h${level}>${children || '<br>'}</h${level}>`;
+    }
+    case 'image': {
+      const resolved =
+        typeof options.resolveImageUrls === 'function'
+          ? options.resolveImageUrls(node)
+          : undefined;
+      const fallbackSrc =
+        typeof node.attrs?.src === 'string' ? node.attrs.src : undefined;
+      const urls = normalizeImageUrls(resolved, fallbackSrc);
+      if (!urls.length) return '';
+      const alt =
+        typeof node.attrs?.alt === 'string'
+          ? ` alt="${escapeHtmlAttribute(node.attrs.alt)}"`
+          : '';
+      return urls
+        .map(url => `<img src="${escapeHtmlAttribute(url)}"${alt}>`)
+        .join('');
+    }
+    case 'text':
+      return applyTextMarks(escapeHtml(node.text), node.marks);
+    default:
+      return children;
+  }
+}
+
+function renderRanobeLibProseMirror(
+  input: HTML[] | HTML | null | undefined,
+  options: ProseMirrorToHtmlOptions = {},
+): string {
+  if (Array.isArray(input)) {
+    return renderRanobeLibNodes(input, options);
+  }
+  if (input && Array.isArray(input.content)) {
+    return renderRanobeLibNodes(input.content, options);
+  }
+  return '';
+}
+
 function createRanobeLibAttachmentMap(
   attachments: Attachment[],
 ): Record<string, string> {
@@ -559,6 +698,7 @@ type HTML = {
   content?: HTML[];
   attrs?: Attrs;
   text?: string;
+  marks?: Mark[];
 };
 
 type Attrs = {
@@ -566,6 +706,15 @@ type Attrs = {
   alt?: string | null;
   title?: string | null;
   images?: { image: string | number }[];
+  level?: number;
+  href?: string;
+};
+
+type Mark = {
+  type: string;
+  attrs?: {
+    href?: string;
+  };
 };
 
 type authorization = {
