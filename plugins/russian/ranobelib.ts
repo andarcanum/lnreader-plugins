@@ -84,7 +84,7 @@ class RLIB implements Plugin.PluginBase {
     }
 
     const result: TopLevel = await fetchApi(url, {
-      headers: this.user?.token,
+      headers: { ...this.user?.token, Referer: this.site + '/' },
     }).then(res => res.json());
 
     const novels: Plugin.NovelItem[] = [];
@@ -103,7 +103,13 @@ class RLIB implements Plugin.PluginBase {
   async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
     const { data }: { data: DataClass } = await fetchApi(
       `${this.apiSite}${novelPath}?fields[]=summary&fields[]=genres&fields[]=tags&fields[]=teams&fields[]=authors&fields[]=status_id&fields[]=artists`,
-      { headers: { ...this.user?.token, 'Site-Id': '3' } },
+      {
+        headers: {
+          ...this.user?.token,
+          'Site-Id': '3',
+          Referer: this.site + '/',
+        },
+      },
     ).then(res => res.json());
 
     const novel: Plugin.SourceNovel = {
@@ -142,7 +148,7 @@ class RLIB implements Plugin.PluginBase {
 
     const chaptersJSON: { data: DataChapter[] } = await fetchApi(
       `${this.apiSite}${novelPath}/chapters`,
-      { headers: this.user?.token },
+      { headers: { ...this.user?.token, Referer: this.site + '/' } },
     ).then(res => res.json());
 
     if (chaptersJSON.data?.length) {
@@ -206,7 +212,7 @@ class RLIB implements Plugin.PluginBase {
           number +
           '&volume=' +
           volume,
-        { headers: this.user?.token },
+        { headers: { ...this.user?.token, Referer: this.site + '/' } },
       ).then(res => res.json());
       const content = result?.data?.content;
       const attachmentUrls = createRanobeLibAttachmentMap(
@@ -238,7 +244,7 @@ class RLIB implements Plugin.PluginBase {
   async searchNovels(searchTerm: string): Promise<Plugin.NovelItem[]> {
     const url = this.apiSite + '?site_id[0]=3&q=' + searchTerm;
     const result: TopLevel = await fetchApi(url, {
-      headers: this.user?.token,
+      headers: { ...this.user?.token, Referer: this.site + '/' },
     }).then(res => res.json());
 
     const novels: Plugin.NovelItem[] = [];
