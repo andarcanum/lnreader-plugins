@@ -21,7 +21,7 @@ const USER_CONTENT_LINK = process.env.USER_CONTENT_BASE
 
 // Базовый URL ветки релиза
 const REPO_BASE =
-  'https://raw.githubusercontent.com/andreykolesnikov/lnreader-plugins/plugins/v3.0.0';
+  'https://raw.githubusercontent.com/andarcanum/lnreader-plugins/plugins/v3.0.0';
 
 // Иконки лежат в корне ветки в public/static
 // БЫЛО: ${REPO_BASE}/.dist/public/static (ошибка)
