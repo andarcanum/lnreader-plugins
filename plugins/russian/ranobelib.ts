@@ -21,6 +21,7 @@ class RLIB implements Plugin.PluginBase {
   version = '2.2.2';
   icon = 'src/ru/ranobelib/icon.png';
   webStorageUtilized = true;
+  private readonly rateLimitRetryCount = 2;
   imageRequestInit = {
     headers: {
       Accept:
@@ -28,6 +29,50 @@ class RLIB implements Plugin.PluginBase {
       Referer: this.site,
     },
   };
+
+  async sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private getRateLimitDelay(response: Response, attempt: number) {
+    const retryAfter = response.headers.get('Retry-After');
+    if (retryAfter) {
+      const retryAfterSeconds = Number(retryAfter);
+      if (Number.isFinite(retryAfterSeconds)) {
+        return Math.max(0, retryAfterSeconds) * 1000;
+      }
+
+      const retryAfterAt = Date.parse(retryAfter);
+      if (!Number.isNaN(retryAfterAt)) {
+        return Math.max(0, retryAfterAt - Date.now());
+      }
+    }
+
+    return 1000 * 2 ** attempt;
+  }
+
+  private async fetchJsonWithRetry<T>(
+    url: string,
+    init?: Parameters<typeof fetchApi>[1],
+  ): Promise<T> {
+    let lastResponse: Response | null = null;
+
+    for (let attempt = 0; attempt <= this.rateLimitRetryCount; attempt += 1) {
+      const response = await fetchApi(url, init);
+      if (response.status !== 429) {
+        return response.json() as Promise<T>;
+      }
+
+      lastResponse = response;
+      if (attempt < this.rateLimitRetryCount) {
+        await this.sleep(this.getRateLimitDelay(response, attempt));
+      }
+    }
+
+    throw new Error(
+      `RanobeLib rate limited${lastResponse ? ` (${lastResponse.status})` : ''}`,
+    );
+  }
 
   async popularNovels(
     pageNo: number,
@@ -82,9 +127,9 @@ class RLIB implements Plugin.PluginBase {
       }
     }
 
-    const result: TopLevel = await fetchApi(url, {
+    const result: TopLevel = await this.fetchJsonWithRetry(url, {
       headers: { ...this.user?.token, Referer: this.site + '/' },
-    }).then(res => res.json());
+    });
 
     const novels: Plugin.NovelItem[] = [];
     if (result.data instanceof Array) {
@@ -100,7 +145,7 @@ class RLIB implements Plugin.PluginBase {
   }
 
   async parseNovel(novelPath: string): Promise<Plugin.SourceNovel> {
-    const { data }: { data: DataClass } = await fetchApi(
+    const { data }: { data: DataClass } = await this.fetchJsonWithRetry(
       `${this.apiSite}${novelPath}?fields[]=summary&fields[]=genres&fields[]=tags&fields[]=teams&fields[]=authors&fields[]=status_id&fields[]=artists`,
       {
         headers: {
@@ -109,7 +154,7 @@ class RLIB implements Plugin.PluginBase {
           Referer: this.site + '/',
         },
       },
-    ).then(res => res.json());
+    );
 
     const novel: Plugin.SourceNovel = {
       path: novelPath,
@@ -145,10 +190,10 @@ class RLIB implements Plugin.PluginBase {
       { '0': 'Главная страница' } as Record<string, string>,
     ) || { '0': 'Главная страница' };
 
-    const chaptersJSON: { data: DataChapter[] } = await fetchApi(
+    const chaptersJSON: { data: DataChapter[] } = await this.fetchJsonWithRetry(
       `${this.apiSite}${novelPath}/chapters`,
       { headers: { ...this.user?.token, Referer: this.site + '/' } },
-    ).then(res => res.json());
+    );
 
     if (chaptersJSON.data?.length) {
       let chapters: Plugin.ChapterItem[] = chaptersJSON.data.flatMap(chapter =>
@@ -202,7 +247,7 @@ class RLIB implements Plugin.PluginBase {
     let chapterText = '';
 
     if (slug && volume && number) {
-      const result: { data: DataClass } = await fetchApi(
+      const result: { data: DataClass } = await this.fetchJsonWithRetry(
         this.apiSite +
           slug +
           '/chapter?' +
@@ -212,7 +257,7 @@ class RLIB implements Plugin.PluginBase {
           '&volume=' +
           volume,
         { headers: { ...this.user?.token, Referer: this.site + '/' } },
-      ).then(res => res.json());
+      );
       const content = result?.data?.content;
       const attachmentUrls = createRanobeLibAttachmentMap(
         result.data.attachments || [],
@@ -241,10 +286,11 @@ class RLIB implements Plugin.PluginBase {
   }
 
   async searchNovels(searchTerm: string): Promise<Plugin.NovelItem[]> {
-    const url = this.apiSite + '?site_id[0]=3&q=' + searchTerm;
-    const result: TopLevel = await fetchApi(url, {
+    const url =
+      this.apiSite + '?site_id[0]=3&q=' + encodeURIComponent(searchTerm);
+    const result: TopLevel = await this.fetchJsonWithRetry(url, {
       headers: { ...this.user?.token, Referer: this.site + '/' },
-    }).then(res => res.json());
+    });
 
     const novels: Plugin.NovelItem[] = [];
     if (result.data instanceof Array) {
