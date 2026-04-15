@@ -47,8 +47,6 @@
     "sourceSite": "https://novelfull.com/",
     "sourceName": "NovelFull",
     "options": {
-      "versionIncrements": 1,
-      "preferNovelDetailCover": true,
       "latestPage": "latest-release-novel",
       "searchPage": "search",
       "chapterListing": "ajax-chapter-option"
@@ -85,8 +83,6 @@
     "sourceSite": "https://novelbin.com/",
     "sourceName": "Novel Bin",
     "options": {
-      "versionIncrements": 1,
-      "preferNovelDetailCover": true,
       "latestPage": "sort/latest",
       "searchPage": "search"
     }
