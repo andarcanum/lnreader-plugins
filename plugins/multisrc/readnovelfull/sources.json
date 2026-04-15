@@ -4,6 +4,8 @@
     "sourceSite": "https://readnovelfull.com/",
     "sourceName": "ReadNovelFull",
     "options": {
+      "versionIncrements": 1,
+      "preferNovelDetailCover": true,
       "latestPage": "novel-list/latest-release-novel",
       "searchPage": "novel-list/search"
     }
@@ -47,6 +49,8 @@
     "sourceSite": "https://novelfull.com/",
     "sourceName": "NovelFull",
     "options": {
+      "versionIncrements": 1,
+      "preferNovelDetailCover": true,
       "latestPage": "latest-release-novel",
       "searchPage": "search",
       "chapterListing": "ajax-chapter-option"
