@@ -83,6 +83,7 @@
     "sourceSite": "https://novelbin.com/",
     "sourceName": "Novel Bin",
     "options": {
+      "versionIncrements": 1,
       "latestPage": "sort/latest",
       "searchPage": "search"
     }

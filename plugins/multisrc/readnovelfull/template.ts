@@ -62,6 +62,14 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  normalizeCoverUrl(cover: string): string {
+    if (this.id === 'novelbin') {
+      return cover.replace('/novel_200_89/', '/novel/');
+    }
+
+    return cover;
+  }
+
   extractDetailCover(html: string): string | null {
     let detailCover: string | null = null;
     let inCoverBlock = false;
@@ -91,7 +99,9 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
           const cover =
             attribs.src ?? attribs['data-cfsrc'] ?? attribs['data-src'];
           if (cover && !cover.startsWith('data:image/')) {
-            detailCover = new URL(cover, this.site).href;
+            detailCover = this.normalizeCoverUrl(
+              new URL(cover, this.site).href,
+            );
           }
         }
       },
@@ -151,7 +161,7 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
 
           return {
             ...novel,
-            cover: detailCover,
+            cover: this.normalizeCoverUrl(detailCover),
           };
         }),
       );
@@ -207,7 +217,9 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
             const cover =
               attribs['data-src'] || attribs['data-cfsrc'] || attribs.src;
             if (cover && !cover.startsWith('data:image/')) {
-              tempNovel.cover = new URL(cover, this.site).href;
+              tempNovel.cover = this.normalizeCoverUrl(
+                new URL(cover, this.site).href,
+              );
             }
           }
         } else if (state === ParsingState.NovelName) {
@@ -398,7 +410,9 @@ class ReadNovelFullPlugin implements Plugin.PluginBase {
                 attribs.src ?? attribs['data-cfsrc'] ?? attribs['data-src'];
               const name = attribs.title;
               if (cover) {
-                novel.cover = new URL(cover, this.site).href;
+                novel.cover = this.normalizeCoverUrl(
+                  new URL(cover, this.site).href,
+                );
               }
               if (name) {
                 novel.name = name;
