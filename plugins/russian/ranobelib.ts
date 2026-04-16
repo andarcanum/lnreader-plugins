@@ -18,7 +18,7 @@ class RLIB implements Plugin.PluginBase {
   name = 'RanobeLib';
   site = 'https://ranobelib.me';
   apiSite = 'https://api.cdnlibs.org/api/manga/';
-  version = '2.2.4';
+  version = '2.2.5';
   icon = 'src/ru/ranobelib/icon.png';
   webStorageUtilized = true;
   private readonly rateLimitRetryCount = 2;
@@ -160,8 +160,7 @@ class RLIB implements Plugin.PluginBase {
       path: novelPath,
       name: data.rus_name || data.name,
       cover: data.cover?.default || defaultCover,
-      summary:
-        typeof data.summary === 'string' ? data.summary.trim() : undefined,
+      summary: normalizeRanobeLibSummary(data.summary),
     };
 
     if (data.status?.id) {
@@ -710,6 +709,58 @@ function renderRanobeLibProseMirror(
   return '';
 }
 
+function normalizeRanobeLibSummary(
+  input: string | HTML | HTML[] | null | undefined,
+): string | undefined {
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    return trimmed.length ? trimmed : undefined;
+  }
+
+  const text = renderRanobeLibText(input);
+  const trimmed = text.trim();
+  return trimmed.length ? trimmed : undefined;
+}
+
+function renderRanobeLibText(input: HTML[] | HTML | null | undefined): string {
+  if (Array.isArray(input)) {
+    return input.map(renderRanobeLibNodeText).filter(Boolean).join('\n\n');
+  }
+  if (input && Array.isArray(input.content)) {
+    return input.content
+      .map(renderRanobeLibNodeText)
+      .filter(Boolean)
+      .join('\n\n');
+  }
+  return '';
+}
+
+function renderRanobeLibNodeText(node: HTML | undefined): string {
+  if (!node || typeof node !== 'object') return '';
+
+  const type = normalizeNodeType(node.type);
+  const children = renderRanobeLibText(node.content);
+
+  switch (type) {
+    case 'doc':
+    case 'paragraph':
+    case 'blockquote':
+    case 'bulletlist':
+    case 'orderedlist':
+    case 'listitem':
+    case 'heading':
+      return children;
+    case 'hardbreak':
+    case 'horizontalrule':
+    case 'delimiter':
+      return '\n';
+    case 'text':
+      return node.text ?? '';
+    default:
+      return children;
+  }
+}
+
 function createRanobeLibAttachmentMap(
   attachments: Attachment[],
 ): Record<string, string> {
@@ -839,7 +890,7 @@ type DataClass = {
   ageRestriction?: AgeRestriction;
   site?: number;
   type: string;
-  summary?: string;
+  summary?: string | HTML;
   is_licensed?: boolean;
   teams: DataTeam[];
   genres?: Genre[];
