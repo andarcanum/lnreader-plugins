@@ -18,7 +18,7 @@ class RLIB implements Plugin.PluginBase {
   name = 'RanobeLib';
   site = 'https://ranobelib.me';
   apiSite = 'https://api.cdnlibs.org/api/manga/';
-  version = '2.2.3';
+  version = '2.2.4';
   icon = 'src/ru/ranobelib/icon.png';
   webStorageUtilized = true;
   private readonly rateLimitRetryCount = 2;
@@ -160,7 +160,8 @@ class RLIB implements Plugin.PluginBase {
       path: novelPath,
       name: data.rus_name || data.name,
       cover: data.cover?.default || defaultCover,
-      summary: data.summary?.trim(),
+      summary:
+        typeof data.summary === 'string' ? data.summary.trim() : undefined,
     };
 
     if (data.status?.id) {
@@ -199,9 +200,11 @@ class RLIB implements Plugin.PluginBase {
       let chapters: Plugin.ChapterItem[] = chaptersJSON.data.flatMap(chapter =>
         chapter.branches.map(({ branch_id, created_at }) => {
           const bId = String(branch_id ?? '0');
+          const chapterName =
+            typeof chapter.name === 'string' ? chapter.name.trim() : '';
           return {
             name: `Том ${chapter.volume} Глава ${chapter.number}${
-              chapter.name ? ' ' + chapter.name.trim() : ''
+              chapterName ? ' ' + chapterName : ''
             }`,
             path: `${novelPath}/${chapter.volume}/${chapter.number}/${bId}`,
             releaseTime: created_at ? dayjs(created_at).format('LLL') : null,
