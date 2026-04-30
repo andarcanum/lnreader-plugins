@@ -25,7 +25,7 @@ class IfreedomPlugin implements Plugin.PluginBase {
     this.name = metadata.sourceName;
     this.icon = `multisrc/ifreedom/${metadata.id.toLowerCase()}/icon.png`;
     this.site = metadata.sourceSite;
-    this.version = '1.1.0';
+    this.version = '1.1.1';
     this.filters = metadata.filters;
   }
 
@@ -323,35 +323,28 @@ class IfreedomPlugin implements Plugin.PluginBase {
       });
     }
 
-    if (!chapterHtml) return '';
+    if (!chapterText) return '';
 
-    chapterHtml = chapterHtml.replace(
-      /<script[^>]*>[\s\S]*?<\/script>/gim,
-      '',
-    );
-    chapterHtml = chapterHtml.replace(
+    chapterText = chapterText.replace(
       /<div class="pc-adv">[\s\S]*?<\/div>/gim,
       '',
     );
-    chapterHtml = chapterHtml.replace(
+    chapterText = chapterText.replace(
       /<div class="mob-adv">[\s\S]*?<\/div>/gim,
       '',
     );
 
-    if (chapterHtml.includes('<img')) {
-      chapterHtml = chapterHtml.replace(
-        /srcset="([^"]+)"/g,
-        (match, src) => {
-          if (!src) return match;
-          const bestlink = src
-            .split(' ')
-            .filter((url: string) => url.startsWith('http'))
-            .pop();
-          return bestlink ? `src="${bestlink}"` : match;
-        },
-      );
+    if (chapterText.includes('<img')) {
+      chapterText = chapterText.replace(/srcset="([^"]+)"/g, (match, src) => {
+        if (!src) return match;
+        const bestlink = src
+          .split(' ')
+          .filter((url: string) => url.startsWith('http'))
+          .pop();
+        return bestlink ? `src="${bestlink}"` : match;
+      });
     }
-    return chapterHtml;
+    return chapterText;
   }
 
   async searchNovels(
