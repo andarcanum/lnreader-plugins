@@ -129,13 +129,16 @@ class NovelUpdates implements Plugin.PluginBase {
 
     chaptersCheerio('li.sp_li_chp').each((_, el) => {
       const $el = chaptersCheerio(el);
-      const $groupLink = $el.find('a').first();
-      const $chapterLink = $groupLink.next();
-
+      const $groupLink = $el.find('a[href*="/group/"]');
+      const $maybeChapterLink = $el.find('a[href^="//"]');
+      const $chapterLink =
+        $maybeChapterLink.length > 0 ? $maybeChapterLink : $el.find('a');
       const rawHref = $chapterLink.attr('href');
       if (!rawHref) return;
 
-      const chapterPath = 'https:' + rawHref;
+      const chapterPath = rawHref.startsWith('//')
+        ? 'https:' + rawHref
+        : rawHref;
 
       chapters.push({
         name:
@@ -148,7 +151,10 @@ class NovelUpdates implements Plugin.PluginBase {
             .replace(/\b\w/g, l => l.toUpperCase())
             .trim() || `Chapter ${chapters.length + 1}`,
         path: chapterPath.replace(this.site, ''),
-        scanlator: $groupLink.text().trim() || undefined,
+        scanlator:
+          $groupLink.length > 0
+            ? $groupLink.first().text().trim() || undefined
+            : undefined,
       });
     });
 
