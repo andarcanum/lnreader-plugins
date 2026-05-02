@@ -6,7 +6,7 @@ import { Plugin } from '@/types/plugin';
 class NovelUpdates implements Plugin.PluginBase {
   id = 'novelupdates';
   name = 'Novel Updates';
-  version = '0.10.0';
+  version = '0.10.1';
   icon = 'src/en/novelupdates/icon.png';
   customCSS = 'src/en/novelupdates/customCSS.css';
   site = 'https://www.novelupdates.com/';
@@ -127,23 +127,42 @@ class NovelUpdates implements Plugin.PluginBase {
     const chaptersCheerio = parseHTML(chaptersHtml);
     const chapters: Plugin.ChapterItem[] = [];
 
-    chaptersCheerio('li.sp_li_chp').each((_, el) => {
+    chaptersCheerio('li.sp_li_chp, #myTable tr').each((_, el) => {
       const $el = chaptersCheerio(el);
       const $groupLink = $el.find('a[href*="/group/"]');
-      const $maybeChapterLink = $el.find('a[href^="//"]');
-      const $chapterLink =
-        $maybeChapterLink.length > 0 ? $maybeChapterLink : $el.find('a');
-      const rawHref = $chapterLink.attr('href');
+      const $chapterLinks = $el
+        .find('a[href], a[data-href]')
+        .filter((_, link) => {
+          const $link = chaptersCheerio(link);
+          const href = ($link.attr('href') || $link.attr('data-href') || '')
+            .trim()
+            .toLowerCase();
+          if (!href || href.includes('/group/')) return false;
+          return (
+            href.startsWith('//') ||
+            href.includes('/extnu/') ||
+            href.includes('/go-to/') ||
+            href.includes('chapter') ||
+            href.includes('/read')
+          );
+        });
+      const $chapterLink = $chapterLinks.first();
+      const rawHref =
+        $chapterLink.attr('href') || $chapterLink.attr('data-href');
       if (!rawHref) return;
 
       const chapterPath = rawHref.startsWith('//')
         ? 'https:' + rawHref
         : rawHref;
+      const rawChapterName =
+        $chapterLink.text().trim() ||
+        $chapterLink.attr('title')?.trim() ||
+        $el.find('[title]').last().attr('title')?.trim() ||
+        '';
 
       chapters.push({
         name:
-          $chapterLink
-            .text()
+          rawChapterName
             .replace('v', 'volume ')
             .replace('c', ' chapter ')
             .replace('part', 'part ')
