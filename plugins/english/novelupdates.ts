@@ -6,7 +6,7 @@ import { Plugin } from '@/types/plugin';
 class NovelUpdates implements Plugin.PluginBase {
   id = 'novelupdates';
   name = 'Novel Updates';
-  version = '0.9.6';
+  version = '0.9.7';
   icon = 'src/en/novelupdates/icon.png';
   customCSS = 'src/en/novelupdates/customCSS.css';
   site = 'https://www.novelupdates.com/';
@@ -128,22 +128,23 @@ class NovelUpdates implements Plugin.PluginBase {
     const chapters: Plugin.ChapterItem[] = [];
 
     chaptersCheerio('li.sp_li_chp').each((_, el) => {
-      const chapterName = chaptersCheerio(el)
-        .text()
-        .replace('v', 'volume ')
-        .replace('c', ' chapter ')
-        .replace('part', 'part ')
-        .replace('ss', 'SS')
-        .replace(/\b\w/g, l => l.toUpperCase())
-        .trim();
+      const $anchors = chaptersCheerio(el).find('a');
+      const groupName = $anchors.first().text().trim();
+      const chapterAnchor = $anchors.eq(1);
+      const chapterName = chapterAnchor.text().trim();
+      const chapterHref = chapterAnchor.attr('href');
 
-      const chapterPath =
-        'https:' + chaptersCheerio(el).find('a').first().next().attr('href');
+      const chapterPath = chapterHref
+        ? chapterHref.startsWith('//')
+          ? 'https:' + chapterHref
+          : chapterHref
+        : null;
 
       if (chapterPath)
         chapters.push({
           name: chapterName,
           path: chapterPath.replace(this.site, ''),
+          scanlator: groupName || undefined,
         });
     });
 
