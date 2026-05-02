@@ -6,7 +6,7 @@ import { Plugin } from '@/types/plugin';
 class NovelUpdates implements Plugin.PluginBase {
   id = 'novelupdates';
   name = 'Novel Updates';
-  version = '0.10.1';
+  version = '0.9.6';
   icon = 'src/en/novelupdates/icon.png';
   customCSS = 'src/en/novelupdates/customCSS.css';
   site = 'https://www.novelupdates.com/';
@@ -127,54 +127,24 @@ class NovelUpdates implements Plugin.PluginBase {
     const chaptersCheerio = parseHTML(chaptersHtml);
     const chapters: Plugin.ChapterItem[] = [];
 
-    chaptersCheerio('li.sp_li_chp, #myTable tr').each((_, el) => {
-      const $el = chaptersCheerio(el);
-      const $groupLink = $el.find('a[href*="/group/"]');
-      const $chapterLinks = $el
-        .find('a[href], a[data-href]')
-        .filter((_, link) => {
-          const $link = chaptersCheerio(link);
-          const href = ($link.attr('href') || $link.attr('data-href') || '')
-            .trim()
-            .toLowerCase();
-          if (!href || href.includes('/group/')) return false;
-          return (
-            href.startsWith('//') ||
-            href.includes('/extnu/') ||
-            href.includes('/go-to/') ||
-            href.includes('chapter') ||
-            href.includes('/read')
-          );
+    chaptersCheerio('li.sp_li_chp').each((_, el) => {
+      const chapterName = chaptersCheerio(el)
+        .text()
+        .replace('v', 'volume ')
+        .replace('c', ' chapter ')
+        .replace('part', 'part ')
+        .replace('ss', 'SS')
+        .replace(/\b\w/g, l => l.toUpperCase())
+        .trim();
+
+      const chapterPath =
+        'https:' + chaptersCheerio(el).find('a').first().next().attr('href');
+
+      if (chapterPath)
+        chapters.push({
+          name: chapterName,
+          path: chapterPath.replace(this.site, ''),
         });
-      const $chapterLink = $chapterLinks.first();
-      const rawHref =
-        $chapterLink.attr('href') || $chapterLink.attr('data-href');
-      if (!rawHref) return;
-
-      const chapterPath = rawHref.startsWith('//')
-        ? 'https:' + rawHref
-        : rawHref;
-      const rawChapterName =
-        $chapterLink.text().trim() ||
-        $chapterLink.attr('title')?.trim() ||
-        $el.find('[title]').last().attr('title')?.trim() ||
-        '';
-
-      chapters.push({
-        name:
-          rawChapterName
-            .replace('v', 'volume ')
-            .replace('c', ' chapter ')
-            .replace('part', 'part ')
-            .replace('ss', 'SS')
-            .replace(/\b\w/g, l => l.toUpperCase())
-            .trim() || `Chapter ${chapters.length + 1}`,
-        path: chapterPath.replace(this.site, ''),
-        scanlator:
-          $groupLink.length > 0
-            ? $groupLink.first().text().trim() || undefined
-            : undefined,
-      });
     });
 
     novel.chapters = chapters.reverse();
@@ -654,54 +624,6 @@ class NovelUpdates implements Plugin.PluginBase {
           }
         });
         chapterContent = chapterCheerio.html()!;
-        break;
-      }
-      // Last edited in 0.9.8 by K1ngfish3r - 04/04/2026
-      // CF hyper aggressive or just NU shenanigans, login to patreon is 50/50
-      case 'patreon': {
-        loadedCheerio('#track-click,[class*="hidden "]').remove();
-        chapterTitle = loadedCheerio('h1[data-tag="post-title"]').text();
-        chapterContent = loadedCheerio(
-          '[data-tag="post-card"] [class*="PaddingTop"]',
-        ).html()!;
-        break;
-      }
-      // Last edited in 0.9.7 by Batorian - 18/03/2026
-      case 'r-p-d': {
-        let parts = chapterPath.split('/');
-
-        // 1. Resolve the redirect
-        const resolveRes = await fetchApi(
-          `${parts[0]}//${parts[2]}/resolve?p=/${parts.slice(3).join('/')}`,
-        );
-        const { location } = await resolveRes.json();
-        parts = location.split('/');
-        const base = `${parts[0]}//${parts[2]}`;
-
-        // 2. Get Meta & Token
-        const meta = await fetchApi(
-          `${base}/api/chapter-meta?seriesSlug=${parts[4]}&chapterSlug=${parts[5]}`,
-        ).then(r => r.json());
-        const id = meta.chapter.id;
-        const { token } = await fetchApi(
-          `${base}/api/chapters/${id}/parts-token`,
-        ).then(r => r.json());
-
-        // 3. Fetch and Wrap in <p> tags
-        let total = 1;
-        for (let i = 1; i <= total; i++) {
-          const part = await fetchApi(
-            `${base}/api/chapters/${id}/parts?index=${i}&token=${token}`,
-          ).then(r => r.json());
-
-          // Wrap the entire part content
-          // We replace \n\n with </p><p> and wrap the edges in <p> and </p>
-          const formattedPart =
-            '<p>' + part.markdown.replace(/\n\n/g, '</p><p>') + '</p>';
-
-          chapterText += formattedPart;
-          total = part.total;
-        }
         break;
       }
       // Last edited in 0.9.0 by Batorian - 19/03/2025
